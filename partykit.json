@@ -1,0 +1,6 @@
+{
+  "name": "collab-canvas-v2",
+  "main": "party/index.ts",
+  "port": 1999,
+  "compatibilityDate": "2026-02-16"
+}
