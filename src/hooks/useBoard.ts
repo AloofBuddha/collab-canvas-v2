@@ -1,26 +1,48 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { Doc } from "yjs"
 import YPartyKitProvider from "y-partykit/provider"
-import { Awareness } from "y-protocols/awareness"
+import type { Awareness } from "y-protocols/awareness"
 import type { Cursor, RemoteCursor } from "../types/index.ts"
+import { getUserColorFromId } from "../utils/userColors.ts"
+import { throttle, CURSOR_THROTTLE_MS } from "../utils/throttle.ts"
 
 interface LocalAwarenessState {
   cursor: Cursor | null
   user: { name: string; color: string }
 }
 
+const ANIMAL_NAMES = [
+  "Fox", "Owl", "Bear", "Wolf", "Deer", "Hawk", "Lynx", "Orca",
+  "Puma", "Wren", "Ibis", "Kiwi", "Moth", "Newt", "Crow", "Dove",
+]
+
+function generateGuestName(clientId: number): string {
+  const animal = ANIMAL_NAMES[clientId % ANIMAL_NAMES.length]
+  return `${animal}-${clientId % 1000}`
+}
+
 export function useBoard(boardId: string) {
-  const { provider, awareness } = useMemo(() => {
+  const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([])
+  const providerRef = useRef<YPartyKitProvider | null>(null)
+  const awarenessRef = useRef<Awareness | null>(null)
+
+  useEffect(() => {
     const doc = new Doc()
     const provider = new YPartyKitProvider("localhost:1999", boardId, doc, {
       protocol: "ws",
     })
-    return { provider, awareness: provider.awareness as Awareness }
-  }, [boardId])
+    const awareness = provider.awareness
 
-  const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([])
+    providerRef.current = provider
+    awarenessRef.current = awareness
 
-  useEffect(() => {
+    // Set local user identity
+    const clientIdStr = String(awareness.clientID)
+    const color = getUserColorFromId(clientIdStr)
+    const name = generateGuestName(awareness.clientID)
+    awareness.setLocalStateField("user", { name, color })
+
+    // Listen for remote cursor changes
     const handleChange = () => {
       const states = awareness.getStates() as Map<number, LocalAwarenessState>
       const cursors: RemoteCursor[] = []
@@ -42,28 +64,22 @@ export function useBoard(boardId: string) {
     }
 
     awareness.on("change", handleChange)
+
     return () => {
       awareness.off("change", handleChange)
-    }
-  }, [awareness])
-
-  useEffect(() => {
-    // Set initial user info on awareness
-    const colors = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6", "#1abc9c"]
-    const color = colors[Math.floor(Math.random() * colors.length)]
-    awareness.setLocalStateField("user", {
-      name: `User-${awareness.clientID}`,
-      color,
-    })
-
-    return () => {
       provider.destroy()
+      providerRef.current = null
+      awarenessRef.current = null
     }
-  }, [awareness, provider])
+  }, [boardId])
 
-  const updateCursor = (cursor: Cursor) => {
-    awareness.setLocalStateField("cursor", cursor)
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const updateCursor = useCallback(
+    throttle((cursor: Cursor) => {
+      awarenessRef.current?.setLocalStateField("cursor", cursor)
+    }, CURSOR_THROTTLE_MS),
+    [boardId]
+  )
 
   return { remoteCursors, updateCursor }
 }
