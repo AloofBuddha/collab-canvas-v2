@@ -29,6 +29,8 @@ export function useBoard(boardId: string, user?: User) {
   const [shapes, setShapes] = useState<Record<string, Shape>>({})
   const [onlineUsers, setOnlineUsers] = useState<User[]>([])
   const [localColor, setLocalColor] = useState<string>("#888")
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
   const providerRef = useRef<YPartyKitProvider | null>(null)
   const awarenessRef = useRef<Awareness | null>(null)
   const shapesMapRef = useRef<YMap<Shape> | null>(null)
@@ -50,6 +52,15 @@ export function useBoard(boardId: string, user?: User) {
     // Remote changes from other users are excluded by default.
     const undoManager = new UndoManager(shapesMap)
     undoManagerRef.current = undoManager
+
+    // Track undo/redo stack availability
+    const updateUndoState = () => {
+      setCanUndo(undoManager.undoStack.length > 0)
+      setCanRedo(undoManager.redoStack.length > 0)
+    }
+    undoManager.on('stack-item-added', updateUndoState)
+    undoManager.on('stack-item-popped', updateUndoState)
+    undoManager.on('stack-item-updated', updateUndoState)
 
     // Set local user identity with per-room color assignment
     const clientIdStr = String(awareness.clientID)
@@ -284,6 +295,8 @@ export function useBoard(boardId: string, user?: User) {
     removeShape,
     undo,
     redo,
+    canUndo,
+    canRedo,
     bringToFront,
     sendToBack,
     bringForward,
