@@ -166,7 +166,16 @@ export function CanvasPage({ user }: CanvasPageProps) {
 
   const handleShapeDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
     handleDragMove(e, shape)
-  }, [handleDragMove])
+
+    // Also update cursor position during drag — Konva's native drag
+    // swallows Stage mousemove events, so remote users would see the
+    // cursor frozen at the drag-start position without this.
+    const stage = e.target.getStage()
+    if (stage) {
+      const pos = getPointerPosition(stage)
+      if (pos) updateCursor({ x: pos.x, y: pos.y })
+    }
+  }, [handleDragMove, updateCursor])
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleShapeDragEnd = useCallback((_shape: Shape) => {
