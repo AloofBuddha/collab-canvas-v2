@@ -4,6 +4,8 @@
  * Handles keyboard shortcuts for the canvas:
  * - Delete/Backspace: Delete selected shape
  * - Ctrl/Cmd+D: Duplicate selected shape (offset by 10px)
+ * - Ctrl/Cmd+Z: Undo (via Yjs UndoManager)
+ * - Ctrl/Cmd+Shift+Z / Ctrl/Cmd+Y: Redo (via Yjs UndoManager)
  * - Arrow keys: Nudge selected shape by 1px (10px with Shift)
  * - Escape: Deselect and switch to select tool
  * - Ctrl/Cmd+A: Select all (prevent default — multi-select comes later)
@@ -23,6 +25,8 @@ interface UseKeyboardShortcutsOptions {
   addShape: (shape: Shape) => void
   updateShape: (id: string, updates: Partial<Shape>) => void
   removeShape: (id: string) => void
+  undo: () => void
+  redo: () => void
 }
 
 export function useKeyboardShortcuts({
@@ -33,6 +37,8 @@ export function useKeyboardShortcuts({
   addShape,
   updateShape,
   removeShape,
+  undo,
+  redo,
 }: UseKeyboardShortcutsOptions) {
   // Store mutable values in refs so the keydown listener always reads fresh state
   // without needing to re-register on every render.
@@ -44,6 +50,8 @@ export function useKeyboardShortcuts({
     addShape,
     updateShape,
     removeShape,
+    undo,
+    redo,
   })
 
   useEffect(() => {
@@ -55,6 +63,8 @@ export function useKeyboardShortcuts({
       addShape,
       updateShape,
       removeShape,
+      undo,
+      redo,
     }
   })
 
@@ -78,10 +88,26 @@ export function useKeyboardShortcuts({
         addShape,
         updateShape,
         removeShape,
+        undo,
+        redo,
       } = stateRef.current
 
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
       const modKey = isMac ? e.metaKey : e.ctrlKey
+
+      // Undo (Ctrl/Cmd+Z)
+      if (modKey && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undo()
+        return
+      }
+
+      // Redo (Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y)
+      if (modKey && ((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y')) {
+        e.preventDefault()
+        redo()
+        return
+      }
 
       // Delete / Backspace — delete selected shape
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShapeId) {

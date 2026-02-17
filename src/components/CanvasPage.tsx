@@ -57,6 +57,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
     addShape,
     updateShape,
     removeShape,
+    undo,
+    redo,
   } = useBoard(boardId!, user)
 
   // Pan & Zoom
@@ -119,6 +121,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
     addShape,
     updateShape,
     removeShape,
+    undo,
+    redo,
   })
 
   // Cursor style (needed by mouse handlers below)

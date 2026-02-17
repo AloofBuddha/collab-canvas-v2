@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Doc, Map as YMap } from "yjs"
+import { Doc, Map as YMap, UndoManager } from "yjs"
 import YPartyKitProvider from "y-partykit/provider"
 import type { Awareness } from "y-protocols/awareness"
 import type { Cursor, RemoteCursor, Shape, User } from "../types/index.ts"
@@ -32,6 +32,7 @@ export function useBoard(boardId: string, user?: User) {
   const providerRef = useRef<YPartyKitProvider | null>(null)
   const awarenessRef = useRef<Awareness | null>(null)
   const shapesMapRef = useRef<YMap<Shape> | null>(null)
+  const undoManagerRef = useRef<UndoManager | null>(null)
 
   useEffect(() => {
     const doc = new Doc()
@@ -44,6 +45,11 @@ export function useBoard(boardId: string, user?: User) {
     providerRef.current = provider
     awarenessRef.current = awareness
     shapesMapRef.current = shapesMap
+
+    // UndoManager tracks local changes to the shapes map.
+    // Remote changes from other users are excluded by default.
+    const undoManager = new UndoManager(shapesMap)
+    undoManagerRef.current = undoManager
 
     // Set local user identity with per-room color assignment
     const clientIdStr = String(awareness.clientID)
@@ -146,10 +152,12 @@ export function useBoard(boardId: string, user?: User) {
     return () => {
       shapesMap.unobserveDeep(syncShapes)
       awareness.off("change", handleAwarenessChange)
+      undoManager.destroy()
       provider.destroy()
       providerRef.current = null
       awarenessRef.current = null
       shapesMapRef.current = null
+      undoManagerRef.current = null
     }
   }, [boardId, user?.userId, user?.displayName])
 
@@ -177,6 +185,14 @@ export function useBoard(boardId: string, user?: User) {
     shapesMapRef.current?.delete(id)
   }, [])
 
+  const undo = useCallback(() => {
+    undoManagerRef.current?.undo()
+  }, [])
+
+  const redo = useCallback(() => {
+    undoManagerRef.current?.redo()
+  }, [])
+
   return {
     shapes,
     remoteCursors,
@@ -186,5 +202,7 @@ export function useBoard(boardId: string, user?: User) {
     addShape,
     updateShape,
     removeShape,
+    undo,
+    redo,
   }
 }
