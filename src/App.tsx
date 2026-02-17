@@ -47,7 +47,7 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Dashboard user={user!} />} />
         <Route path="/board/:boardId" element={<CanvasPage user={user!} />} />
       </Routes>
     </BrowserRouter>
