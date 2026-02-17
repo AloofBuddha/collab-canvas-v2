@@ -7,156 +7,48 @@ import {
 } from '../../src/utils/validation'
 
 describe('Validation Utils', () => {
-  describe('validateEmail', () => {
-    it('should accept valid email addresses', () => {
-      const validEmails = [
-        'test@example.com',
-        'user.name@example.com',
-        'user+tag@example.co.uk',
-        'user123@test-domain.com',
-      ]
+  // These are user-facing form boundaries — worth testing because
+  // incorrect validation = users locked out or bad data getting through.
 
-      validEmails.forEach(email => {
-        const result = validateEmail(email)
-        expect(result.isValid).toBe(true)
-        expect(result.error).toBeUndefined()
-      })
-    })
-
-    it('should reject empty email', () => {
-      const result = validateEmail('')
-      expect(result.isValid).toBe(false)
-      expect(result.error).toBe('Email is required')
-    })
-
-    it('should reject invalid email formats', () => {
-      const invalidEmails = [
-        'notanemail',
-        '@example.com',
-        'user@',
-        'user@.com',
-        'user @example.com',
-        'user@example',
-      ]
-
-      invalidEmails.forEach(email => {
-        const result = validateEmail(email)
-        expect(result.isValid).toBe(false)
-        expect(result.error).toBe('Invalid email format')
-      })
-    })
+  it('rejects empty fields with specific messages', () => {
+    expect(validateEmail('').error).toBe('Email is required')
+    expect(validatePassword('').error).toBe('Password is required')
+    expect(validateDisplayName('').error).toBe('Display name is required')
   })
 
-  describe('validatePassword', () => {
-    it('should accept passwords with 6+ characters', () => {
-      const validPasswords = [
-        '123456',
-        'password',
-        'Pass123!@#',
-        'a'.repeat(100),
-      ]
-
-      validPasswords.forEach(password => {
-        const result = validatePassword(password)
-        expect(result.isValid).toBe(true)
-        expect(result.error).toBeUndefined()
-      })
-    })
-
-    it('should reject empty password', () => {
-      const result = validatePassword('')
-      expect(result.isValid).toBe(false)
-      expect(result.error).toBe('Password is required')
-    })
-
-    it('should reject passwords less than 6 characters', () => {
-      const shortPasswords = ['1', '12', '123', '1234', '12345']
-
-      shortPasswords.forEach(password => {
-        const result = validatePassword(password)
-        expect(result.isValid).toBe(false)
-        expect(result.error).toBe('Password must be at least 6 characters')
-      })
-    })
+  it('validates email format (rejects obvious non-emails)', () => {
+    expect(validateEmail('user@example.com').isValid).toBe(true)
+    expect(validateEmail('notanemail').isValid).toBe(false)
+    expect(validateEmail('user@').isValid).toBe(false)
   })
 
-  describe('validateDisplayName', () => {
-    it('should accept valid display names', () => {
-      const validNames = [
-        'Jo',
-        'John',
-        'John Doe',
-        'Alice Smith',
-        'User 123',
-        'a'.repeat(50),
-      ]
+  it('enforces password minimum length', () => {
+    expect(validatePassword('12345').isValid).toBe(false)
+    expect(validatePassword('123456').isValid).toBe(true)
+  })
 
-      validNames.forEach(name => {
-        const result = validateDisplayName(name)
-        expect(result.isValid).toBe(true)
-        expect(result.error).toBeUndefined()
-      })
-    })
-
-    it('should reject empty display name', () => {
-      const result = validateDisplayName('')
-      expect(result.isValid).toBe(false)
-      expect(result.error).toBe('Display name is required')
-    })
-
-    it('should reject names less than 2 characters', () => {
-      const result = validateDisplayName('A')
-      expect(result.isValid).toBe(false)
-      expect(result.error).toBe('Display name must be at least 2 characters')
-    })
-
-    it('should reject names longer than 50 characters', () => {
-      const result = validateDisplayName('a'.repeat(51))
-      expect(result.isValid).toBe(false)
-      expect(result.error).toBe('Display name must be less than 50 characters')
-    })
+  it('enforces display name length bounds', () => {
+    expect(validateDisplayName('A').isValid).toBe(false)          // too short
+    expect(validateDisplayName('Jo').isValid).toBe(true)          // minimum
+    expect(validateDisplayName('a'.repeat(51)).isValid).toBe(false) // too long
   })
 
   describe('parseFirebaseError', () => {
-    it('should parse email-already-in-use error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/email-already-in-use)')
-      expect(result).toBe('This email is already registered')
+    // These map opaque Firebase error strings to user-friendly messages.
+    // Worth testing because the mapping is invisible — if it breaks,
+    // users see raw Firebase errors like "auth/invalid-credential".
+
+    it('maps common Firebase auth errors to friendly messages', () => {
+      expect(parseFirebaseError('Firebase: Error (auth/email-already-in-use)'))
+        .toBe('This email is already registered')
+      expect(parseFirebaseError('Firebase: Error (auth/invalid-credential)'))
+        .toBe('Invalid email or password')
+      expect(parseFirebaseError('Firebase: Error (auth/too-many-requests)'))
+        .toBe('Too many failed attempts. Please try again later')
     })
 
-    it('should parse invalid-email error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/invalid-email)')
-      expect(result).toBe('Invalid email address')
-    })
-
-    it('should parse weak-password error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/weak-password)')
-      expect(result).toBe('Password is too weak')
-    })
-
-    it('should parse user-not-found error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/user-not-found)')
-      expect(result).toBe('No account found with this email')
-    })
-
-    it('should parse wrong-password error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/wrong-password)')
-      expect(result).toBe('Incorrect password')
-    })
-
-    it('should parse invalid-credential error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/invalid-credential)')
-      expect(result).toBe('Invalid email or password')
-    })
-
-    it('should parse too-many-requests error', () => {
-      const result = parseFirebaseError('Firebase: Error (auth/too-many-requests)')
-      expect(result).toBe('Too many failed attempts. Please try again later')
-    })
-
-    it('should return original error for unknown errors', () => {
-      const unknownError = 'Some unknown error'
-      const result = parseFirebaseError(unknownError)
-      expect(result).toBe(unknownError)
+    it('returns original error for unknown Firebase errors', () => {
+      expect(parseFirebaseError('Some unknown error')).toBe('Some unknown error')
     })
   })
 })

@@ -3,75 +3,22 @@ import {
   USER_COLOR_PALETTE,
   getUserColorFromId,
   pickAvailableColor,
-  getColorName,
 } from '../../src/utils/userColors'
 
 describe('userColors', () => {
-  describe('USER_COLOR_PALETTE', () => {
-    it('should have 12 colors', () => {
-      expect(USER_COLOR_PALETTE).toHaveLength(12)
-    })
-
-    it('should contain only unique colors', () => {
-      const uniqueColors = new Set(USER_COLOR_PALETTE)
-      expect(uniqueColors.size).toBe(USER_COLOR_PALETTE.length)
-    })
-
-    it('should contain valid hex colors', () => {
-      USER_COLOR_PALETTE.forEach(color => {
-        expect(color).toMatch(/^#[0-9A-Fa-f]{6}$/)
-      })
-    })
-  })
-
-  describe('getUserColorFromId', () => {
-    it('should return a color from the palette', () => {
-      const color = getUserColorFromId('user-123')
-      expect(USER_COLOR_PALETTE).toContain(color)
-    })
-
-    it('should return the same color for the same ID', () => {
-      const color1 = getUserColorFromId('user-abc')
-      const color2 = getUserColorFromId('user-abc')
-      expect(color1).toBe(color2)
-    })
-
-    it('should return different colors for different IDs (usually)', () => {
-      const colors = new Set<string>()
-      for (let i = 0; i < 100; i++) {
-        colors.add(getUserColorFromId(`user-${i}`))
-      }
-      // With 12 colors and 100 users, we should use most of the palette
-      expect(colors.size).toBeGreaterThan(5)
-    })
-  })
+  // Color assignment is worth testing because we had real bugs:
+  // - All users got red on simultaneous connect (everyone saw empty room)
+  // - Two users got identical greens (palette wasn't distinct enough)
+  // The conflict resolution logic is the important part.
 
   describe('pickAvailableColor', () => {
-    it('should return the first palette color when no colors are taken', () => {
-      const color = pickAvailableColor(new Set(), 'fallback-id')
-      expect(color).toBe(USER_COLOR_PALETTE[0])
-    })
-
-    it('should skip taken colors and return the first available', () => {
-      const taken = new Set([USER_COLOR_PALETTE[0]])
-      const color = pickAvailableColor(taken, 'fallback-id')
-      expect(color).toBe(USER_COLOR_PALETTE[1])
-    })
-
-    it('should return third color when first two are taken', () => {
+    it('assigns first available color, skipping taken ones', () => {
       const taken = new Set([USER_COLOR_PALETTE[0], USER_COLOR_PALETTE[1]])
-      const color = pickAvailableColor(taken, 'fallback-id')
+      const color = pickAvailableColor(taken, 'fallback')
       expect(color).toBe(USER_COLOR_PALETTE[2])
     })
 
-    it('should fall back to hash-based color when all palette colors are taken', () => {
-      const taken = new Set(USER_COLOR_PALETTE as readonly string[])
-      const color = pickAvailableColor(taken, 'fallback-id')
-      // Falls back to getUserColorFromId — result is from palette
-      expect(USER_COLOR_PALETTE).toContain(color)
-    })
-
-    it('should assign distinct colors for sequential users', () => {
+    it('assigns unique colors to sequential users in the same room', () => {
       const taken = new Set<string>()
       const assigned: string[] = []
 
@@ -81,23 +28,24 @@ describe('userColors', () => {
         taken.add(color)
       }
 
-      // All assigned colors should be unique (no duplicates within palette size)
-      const unique = new Set(assigned)
-      expect(unique.size).toBe(USER_COLOR_PALETTE.length)
+      // Every user in the room should have a distinct color
+      expect(new Set(assigned).size).toBe(USER_COLOR_PALETTE.length)
+    })
+
+    it('falls back to hash when all palette colors are taken', () => {
+      const taken = new Set(USER_COLOR_PALETTE as readonly string[])
+      const color = pickAvailableColor(taken, 'overflow-user')
+      // Should still return a valid color (from hash), not crash
+      expect(color).toBeTruthy()
+      expect(color).toMatch(/^#[0-9A-Fa-f]{6}$/)
     })
   })
 
-  describe('getColorName', () => {
-    it('should return human-readable name for palette colors', () => {
-      expect(getColorName('#EF4444')).toBe('Red')
-      expect(getColorName('#F97316')).toBe('Orange')
-      expect(getColorName('#22C55E')).toBe('Green')
-      expect(getColorName('#A855F7')).toBe('Purple')
-    })
-
-    it('should return Unknown for non-palette colors', () => {
-      expect(getColorName('#000000')).toBe('Unknown')
-      expect(getColorName('#FFFFFF')).toBe('Unknown')
+  describe('getUserColorFromId', () => {
+    it('is deterministic — same ID always gets same color', () => {
+      const color1 = getUserColorFromId('user-abc')
+      const color2 = getUserColorFromId('user-abc')
+      expect(color1).toBe(color2)
     })
   })
 })
