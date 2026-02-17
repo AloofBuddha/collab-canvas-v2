@@ -46,6 +46,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     shapes,
     remoteCursors,
     onlineUsers,
+    localColor,
     updateCursor,
     addShape,
     updateShape,
@@ -194,7 +195,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     <>
       <Header
         displayName={user.displayName}
-        color={user.color}
+        color={localColor}
         onlineUsers={onlineUsers}
         currentUserId={user.userId}
         onSignOut={signOut}

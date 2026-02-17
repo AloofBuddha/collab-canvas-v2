@@ -3,7 +3,7 @@ import { Doc, Map as YMap } from "yjs"
 import YPartyKitProvider from "y-partykit/provider"
 import type { Awareness } from "y-protocols/awareness"
 import type { Cursor, RemoteCursor, Shape, User } from "../types/index.ts"
-import { getUserColorFromId } from "../utils/userColors.ts"
+import { pickAvailableColor } from "../utils/userColors.ts"
 import { throttle, CURSOR_THROTTLE_MS } from "../utils/throttle.ts"
 
 interface LocalAwarenessState {
@@ -28,6 +28,7 @@ export function useBoard(boardId: string, user?: User) {
   const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([])
   const [shapes, setShapes] = useState<Record<string, Shape>>({})
   const [onlineUsers, setOnlineUsers] = useState<User[]>([])
+  const [localColor, setLocalColor] = useState<string>("#888")
   const providerRef = useRef<YPartyKitProvider | null>(null)
   const awarenessRef = useRef<Awareness | null>(null)
   const shapesMapRef = useRef<YMap<Shape> | null>(null)
@@ -44,11 +45,20 @@ export function useBoard(boardId: string, user?: User) {
     awarenessRef.current = awareness
     shapesMapRef.current = shapesMap
 
-    // Set local user identity
+    // Set local user identity with per-room color assignment
     const clientIdStr = String(awareness.clientID)
     const id = user?.userId ?? clientIdStr
-    const color = user?.color ?? getUserColorFromId(clientIdStr)
     const name = user?.displayName ?? generateGuestName(awareness.clientID)
+
+    // Scan existing awareness states to find taken colors
+    const takenColors = new Set<string>()
+    awareness.getStates().forEach((state) => {
+      const s = state as LocalAwarenessState
+      if (s.user?.color) takenColors.add(s.user.color)
+    })
+    const color = pickAvailableColor(takenColors, id)
+    setLocalColor(color)
+
     awareness.setLocalStateField("user", { id, name, color })
 
     // Sync shapes from Y.Map → React state
@@ -67,6 +77,36 @@ export function useBoard(boardId: string, user?: User) {
     // Listen for awareness changes (cursors + online users)
     const handleAwarenessChange = () => {
       const states = awareness.getStates() as Map<number, LocalAwarenessState>
+      const localState = states.get(awareness.clientID)
+      const myColor = localState?.user?.color
+
+      // Resolve color conflicts: if a client with a lower clientID has the
+      // same color, we yield and pick a new one. Lower clientID = priority.
+      if (myColor) {
+        let hasConflict = false
+        const otherColors = new Set<string>()
+
+        states.forEach((state, clientId) => {
+          if (clientId === awareness.clientID) return
+          if (!state.user?.color) return
+          otherColors.add(state.user.color)
+          if (state.user.color === myColor && clientId < awareness.clientID) {
+            hasConflict = true
+          }
+        })
+
+        if (hasConflict) {
+          const newColor = pickAvailableColor(otherColors, id)
+          setLocalColor(newColor)
+          awareness.setLocalStateField("user", {
+            ...localState!.user,
+            color: newColor,
+          })
+          // Return early — our state change will trigger another awareness update
+          return
+        }
+      }
+
       const cursors: RemoteCursor[] = []
       const users: User[] = []
 
@@ -91,8 +131,14 @@ export function useBoard(boardId: string, user?: User) {
         })
       })
 
+      // Deduplicate users by Firebase userId (StrictMode double-mount
+      // and multi-tab can create multiple awareness clients per user)
+      const uniqueUsers = Array.from(
+        new Map(users.map((u) => [u.userId, u])).values()
+      )
+
       setRemoteCursors(cursors)
-      setOnlineUsers(users)
+      setOnlineUsers(uniqueUsers)
     }
 
     awareness.on("change", handleAwarenessChange)
@@ -105,7 +151,7 @@ export function useBoard(boardId: string, user?: User) {
       awarenessRef.current = null
       shapesMapRef.current = null
     }
-  }, [boardId, user?.userId, user?.color, user?.displayName])
+  }, [boardId, user?.userId, user?.displayName])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const updateCursor = useCallback(
@@ -135,6 +181,7 @@ export function useBoard(boardId: string, user?: User) {
     shapes,
     remoteCursors,
     onlineUsers,
+    localColor,
     updateCursor,
     addShape,
     updateShape,
