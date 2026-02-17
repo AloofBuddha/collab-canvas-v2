@@ -8,6 +8,7 @@
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
+  signInAnonymously as firebaseSignInAnonymously,
   signOut as firebaseSignOut,
   signInWithPopup,
   GoogleAuthProvider,
@@ -54,6 +55,21 @@ export async function signInWithGoogle(): Promise<AuthResult> {
     }
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
+}
+
+export async function signInAnonymously(): Promise<AuthResult> {
+  try {
+    const cred = await firebaseSignInAnonymously(auth)
+    await updateProfile(cred.user, { displayName: 'Test User' })
+    return { success: true }
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+  }
+}
+
+// Expose anonymous sign-in for e2e tests (Playwright calls this via page.evaluate)
+if (import.meta.env.DEV) {
+  (window as Record<string, unknown>).__collabboard_signInAnonymously = signInAnonymously
 }
 
 export async function signOut(): Promise<AuthResult> {

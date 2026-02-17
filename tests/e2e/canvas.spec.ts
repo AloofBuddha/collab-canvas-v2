@@ -1,24 +1,19 @@
 /**
- * Canvas e2e tests (requires authentication)
+ * Canvas e2e tests (uses anonymous auth via VITE_E2E_MODE)
  *
  * These tests verify the main canvas page after login:
  * - Dashboard loads with "New Board" button
  * - Canvas page shows toolbar and header
  * - Basic canvas interactions (shape creation via click-drag on Konva canvas)
  *
- * Requires E2E_TEST_EMAIL and E2E_TEST_PASSWORD env vars to be set.
- * Without credentials, all tests in this file are skipped.
- *
  * Note on canvas testing: react-konva renders to HTML Canvas, so shapes
  * are NOT in the DOM. We use screenshots for visual verification and test
  * the surrounding UI (toolbar, header) via DOM assertions.
  */
 
-import { test, expect, HAS_TEST_CREDENTIALS } from './fixtures'
+import { test, expect } from './fixtures'
 
 test.describe('Dashboard (authenticated)', () => {
-  test.skip(!HAS_TEST_CREDENTIALS, 'Skipped: set E2E_TEST_EMAIL and E2E_TEST_PASSWORD')
-
   test('shows New Board button after login', async ({ authenticatedPage: page }) => {
     const newBoardButton = page.getByRole('button', { name: 'New Board' })
     await expect(newBoardButton).toBeVisible()
@@ -33,18 +28,18 @@ test.describe('Dashboard (authenticated)', () => {
 })
 
 test.describe('Canvas Page (authenticated)', () => {
-  test.skip(!HAS_TEST_CREDENTIALS, 'Skipped: set E2E_TEST_EMAIL and E2E_TEST_PASSWORD')
-
   test.beforeEach(async ({ authenticatedPage: page }) => {
     // Navigate to a new board
     await page.getByRole('button', { name: 'New Board' }).click()
+    // The create board modal should appear — submit with default name
+    await page.getByRole('button', { name: 'Create' }).click()
     // Wait for canvas to load — toolbar should appear
     await expect(page.getByRole('button', { name: 'Select' })).toBeVisible({ timeout: 10000 })
   })
 
-  test('canvas page shows header with user info and sign out', async ({ authenticatedPage: page }) => {
-    // Header should show CollabBoard title
-    await expect(page.getByRole('heading', { name: 'CollabBoard' })).toBeVisible()
+  test('canvas page shows header with board title and sign out', async ({ authenticatedPage: page }) => {
+    // Header should show CollabBoard breadcrumb
+    await expect(page.getByText('CollabBoard')).toBeVisible()
 
     // Sign Out button should be present
     await expect(page.getByRole('button', { name: 'Sign Out' })).toBeVisible()

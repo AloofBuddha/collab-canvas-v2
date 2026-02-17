@@ -18,8 +18,8 @@ test.describe('Auth Page', () => {
   test('shows login form by default with correct fields', async ({ page }) => {
     await page.goto('/')
 
-    // The app should show "CollabBoard" title
-    await expect(page.getByRole('heading', { name: 'CollabBoard' })).toBeVisible()
+    // The app should show "CollabBoard" title on the auth page
+    await expect(page.getByText('CollabBoard')).toBeVisible()
 
     // Should show "Sign in to your account" subtitle
     await expect(page.getByText('Sign in to your account')).toBeVisible()
