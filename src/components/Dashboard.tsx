@@ -2,14 +2,15 @@
  * Dashboard - Board listing and creation page
  *
  * Tracks boards in localStorage (no server-side board listing with PartyKit).
- * Users can create new boards, revisit recent ones, and delete entries.
+ * Shows two sections: owned boards (deletable) and recently visited boards.
  */
 
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
-import { getBoards, addBoard, removeBoard, type BoardMeta } from '../utils/boardStorage'
+import { getOwnedBoards, getVisitedBoards, addBoard, removeBoard, type BoardMeta } from '../utils/boardStorage'
 import { signOut } from '../utils/auth'
+import CreateBoardModal from './CreateBoardModal'
 import type { User } from '../types'
 import styles from './Dashboard.module.css'
 
@@ -34,22 +35,22 @@ function formatDate(timestamp: number): string {
 
 export function Dashboard({ user }: DashboardProps) {
   const navigate = useNavigate()
-  const [boards, setBoards] = useState<BoardMeta[]>(getBoards)
+  const [ownedBoards, setOwnedBoards] = useState<BoardMeta[]>(getOwnedBoards)
+  const [visitedBoards, setVisitedBoards] = useState<BoardMeta[]>(getVisitedBoards)
+  const [isModalOpen, setIsModalOpen] = useState(false)
 
-  const createBoard = () => {
+  const handleCreate = (title: string) => {
     const boardId = crypto.randomUUID().slice(0, 8)
-    addBoard(boardId, 'Untitled Board')
+    addBoard(boardId, title, true)
+    setIsModalOpen(false)
     navigate(`/board/${boardId}`)
   }
 
   const handleDelete = (e: React.MouseEvent, boardId: string) => {
     e.stopPropagation()
     removeBoard(boardId)
-    setBoards(getBoards())
-  }
-
-  const handleOpenBoard = (boardId: string) => {
-    navigate(`/board/${boardId}`)
+    setOwnedBoards(getOwnedBoards())
+    setVisitedBoards(getVisitedBoards())
   }
 
   return (
@@ -69,13 +70,13 @@ export function Dashboard({ user }: DashboardProps) {
       <main className={styles.content}>
         <div className={styles.topRow}>
           <h2 className={styles.pageTitle}>Your Boards</h2>
-          <button onClick={createBoard} className={styles.newBoardButton}>
+          <button onClick={() => setIsModalOpen(true)} className={styles.newBoardButton}>
             <Plus size={16} />
             New Board
           </button>
         </div>
 
-        {boards.length === 0 ? (
+        {ownedBoards.length === 0 ? (
           <div className={styles.emptyState}>
             <p className={styles.emptyTitle}>No boards yet</p>
             <p className={styles.emptyDescription}>
@@ -84,11 +85,11 @@ export function Dashboard({ user }: DashboardProps) {
           </div>
         ) : (
           <div className={styles.boardGrid}>
-            {boards.map((board) => (
+            {ownedBoards.map((board) => (
               <div
                 key={board.id}
                 className={styles.boardCard}
-                onClick={() => handleOpenBoard(board.id)}
+                onClick={() => navigate(`/board/${board.id}`)}
               >
                 <h3 className={styles.boardTitle}>{board.title}</h3>
                 <p className={styles.boardMeta}>
@@ -107,7 +108,33 @@ export function Dashboard({ user }: DashboardProps) {
             ))}
           </div>
         )}
+
+        {visitedBoards.length > 0 && (
+          <>
+            <h2 className={styles.sectionTitle}>Recently Visited</h2>
+            <div className={styles.boardGrid}>
+              {visitedBoards.map((board) => (
+                <div
+                  key={board.id}
+                  className={styles.boardCard}
+                  onClick={() => navigate(`/board/${board.id}`)}
+                >
+                  <h3 className={styles.boardTitle}>{board.title}</h3>
+                  <p className={styles.boardMeta}>
+                    Last opened {formatDate(board.lastVisitedAt)}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </main>
+
+      <CreateBoardModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onCreate={handleCreate}
+      />
     </div>
   )
 }
