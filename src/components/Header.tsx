@@ -2,6 +2,7 @@
  * Header - Top navigation bar
  *
  * Shows: app title, online user avatars, current user, sign out button.
+ * Optionally shows board title with breadcrumb navigation.
  * Ported from V1, converted Tailwind → CSS Modules.
  */
 
@@ -15,6 +16,8 @@ interface HeaderProps {
   onlineUsers: User[]
   currentUserId: string
   onSignOut: () => void
+  boardTitle?: string
+  onNavigateHome?: () => void
 }
 
 const MAX_VISIBLE_USERS = 10
@@ -25,6 +28,8 @@ export default function Header({
   onlineUsers,
   currentUserId,
   onSignOut,
+  boardTitle,
+  onNavigateHome,
 }: HeaderProps) {
   const remoteUsers = onlineUsers.filter((user) => user.userId !== currentUserId)
   const visibleUsers = remoteUsers.slice(0, MAX_VISIBLE_USERS)
@@ -33,7 +38,19 @@ export default function Header({
   return (
     <header className={styles.header}>
       <div className={styles.left}>
-        <h1 className={styles.title}>CollabBoard</h1>
+        {onNavigateHome ? (
+          <button className={styles.titleLink} onClick={onNavigateHome}>
+            CollabBoard
+          </button>
+        ) : (
+          <h1 className={styles.title}>CollabBoard</h1>
+        )}
+        {boardTitle && (
+          <>
+            <span className={styles.breadcrumbSep}>›</span>
+            <span className={styles.boardTitle}>{boardTitle}</span>
+          </>
+        )}
       </div>
 
       <div className={styles.right}>

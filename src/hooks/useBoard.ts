@@ -24,13 +24,14 @@ function generateGuestName(clientId: number): string {
 const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST ?? "localhost:1999"
 const WS_PROTOCOL = import.meta.env.PROD ? "wss" : "ws"
 
-export function useBoard(boardId: string, user?: User) {
+export function useBoard(boardId: string, user?: User, initialTitle?: string) {
   const [remoteCursors, setRemoteCursors] = useState<RemoteCursor[]>([])
   const [shapes, setShapes] = useState<Record<string, Shape>>({})
   const [onlineUsers, setOnlineUsers] = useState<User[]>([])
   const [localColor, setLocalColor] = useState<string>("#888")
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
+  const [boardTitle, setBoardTitle] = useState<string | null>(null)
   const providerRef = useRef<YPartyKitProvider | null>(null)
   const awarenessRef = useRef<Awareness | null>(null)
   const shapesMapRef = useRef<YMap<Shape> | null>(null)
@@ -43,10 +44,30 @@ export function useBoard(boardId: string, user?: User) {
     })
     const awareness = provider.awareness
     const shapesMap = doc.getMap<Shape>("shapes")
+    const boardMeta = doc.getMap<string>("boardMeta")
 
     providerRef.current = provider
     awarenessRef.current = awareness
     shapesMapRef.current = shapesMap
+
+    // Sync board title from Yjs → React state
+    const syncTitle = () => {
+      setBoardTitle(boardMeta.get("title") ?? null)
+    }
+    boardMeta.observe(syncTitle)
+    syncTitle()
+
+    // When initial sync completes, set the title if this is a new board
+    // (creator passes initialTitle; first writer wins)
+    const handleSync = (synced: boolean) => {
+      if (!synced) return
+      if (!boardMeta.get("title") && initialTitle) {
+        boardMeta.set("title", initialTitle)
+      }
+      // Also read on sync in case the title was set by another client
+      syncTitle()
+    }
+    provider.on("sync", handleSync)
 
     // UndoManager tracks local changes to the shapes map.
     // Remote changes from other users are excluded by default.
@@ -161,6 +182,8 @@ export function useBoard(boardId: string, user?: User) {
     awareness.on("change", handleAwarenessChange)
 
     return () => {
+      boardMeta.unobserve(syncTitle)
+      provider.off("sync", handleSync)
       shapesMap.unobserveDeep(syncShapes)
       awareness.off("change", handleAwarenessChange)
       undoManager.destroy()
@@ -170,6 +193,8 @@ export function useBoard(boardId: string, user?: User) {
       shapesMapRef.current = null
       undoManagerRef.current = null
     }
+  // initialTitle is only used once on sync, but included for correctness
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardId, user?.userId, user?.displayName])
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +314,7 @@ export function useBoard(boardId: string, user?: User) {
     remoteCursors,
     onlineUsers,
     localColor,
+    boardTitle,
     updateCursor,
     addShape,
     updateShape,

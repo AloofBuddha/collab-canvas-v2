@@ -13,6 +13,7 @@
  * - [ : Send selected shape to back (lowest zIndex)
  * - Ctrl/Cmd+] : Bring selected shape forward one step
  * - Ctrl/Cmd+[ : Send selected shape backward one step
+ * - Ctrl/Cmd+0: Reset zoom to 100%
  *
  * V2 approach: operates directly on Yjs via useBoard callbacks (addShape,
  * updateShape, removeShape). No local stores or Firebase persistence needed.
@@ -35,6 +36,7 @@ interface UseKeyboardShortcutsOptions {
   sendToBack: (id: string) => void
   bringForward: (id: string) => void
   sendBackward: (id: string) => void
+  resetZoom?: () => void
 }
 
 export function useKeyboardShortcuts({
@@ -51,6 +53,7 @@ export function useKeyboardShortcuts({
   sendToBack,
   bringForward,
   sendBackward,
+  resetZoom,
 }: UseKeyboardShortcutsOptions) {
   // Store mutable values in refs so the keydown listener always reads fresh state
   // without needing to re-register on every render.
@@ -66,6 +69,7 @@ export function useKeyboardShortcuts({
     redo,
     bringToFront,
     sendToBack,
+    resetZoom,
   })
 
   useEffect(() => {
@@ -81,6 +85,7 @@ export function useKeyboardShortcuts({
       redo,
       bringToFront,
       sendToBack,
+      resetZoom,
     }
   })
 
@@ -108,6 +113,7 @@ export function useKeyboardShortcuts({
         redo,
         bringToFront,
         sendToBack,
+        resetZoom,
       } = stateRef.current
 
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -124,6 +130,13 @@ export function useKeyboardShortcuts({
       if (modKey && ((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y')) {
         e.preventDefault()
         redo()
+        return
+      }
+
+      // Ctrl/Cmd+0 — reset zoom to 100%
+      if (modKey && e.key === '0') {
+        e.preventDefault()
+        resetZoom?.()
         return
       }
 

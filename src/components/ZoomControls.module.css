@@ -1,0 +1,29 @@
+.container {
+  position: fixed;
+  bottom: 2rem;
+  right: 1.5rem;
+  z-index: 10;
+}
+
+.zoomButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5rem;
+  height: var(--toolbar-button-size);
+  padding: 0 0.75rem;
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  box-shadow: var(--shadow-panel);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--color-gray-700);
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.zoomButton:hover {
+  background: var(--color-gray-100);
+  color: var(--color-gray-900);
+}

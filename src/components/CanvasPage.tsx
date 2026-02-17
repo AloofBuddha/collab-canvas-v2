@@ -6,7 +6,7 @@
  */
 
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useNavigate } from 'react-router-dom'
 import { Stage, Layer } from 'react-konva'
 import Konva from 'konva'
 import { useBoard } from '../hooks/useBoard'
@@ -24,12 +24,13 @@ import Toolbar from './Toolbar'
 import UndoRedoButtons from './UndoRedoButtons'
 import FloatingToolbar from './FloatingToolbar'
 import InlineTextEditor from './InlineTextEditor'
+import ZoomControls from './ZoomControls'
 import Header from './Header'
 import { getCursorStyle } from '../utils/canvasUtils'
 import { getPointerPosition } from '../utils/shapeManipulation'
 import type { Tool, Shape, User, TextShape, StickyNoteShape } from '../types'
 import { signOut } from '../utils/auth'
-import { addBoard } from '../utils/boardStorage'
+import { getBoards, addBoard, visitBoard, updateBoardTitle } from '../utils/boardStorage'
 
 interface CanvasPageProps {
   user: User
@@ -37,6 +38,7 @@ interface CanvasPageProps {
 
 export function CanvasPage({ user }: CanvasPageProps) {
   const { boardId } = useParams<{ boardId: string }>()
+  const navigate = useNavigate()
   const stageRef = useRef<Konva.Stage>(null)
   const [tool, setTool] = useState<Tool>('select')
   const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
@@ -48,12 +50,19 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
 
-  // Core Yjs hook — shapes, cursors, CRUD
+  // Look up known board metadata from localStorage
+  const boardMeta = useMemo(() => {
+    return getBoards().find((b) => b.id === boardId)
+  }, [boardId])
+
+  // Core Yjs hook — shapes, cursors, CRUD, board title
+  // Pass localStorage title so the creator can initialize it in Yjs
   const {
     shapes,
     remoteCursors,
     onlineUsers,
     localColor,
+    boardTitle: yjsBoardTitle,
     updateCursor,
     addShape,
     updateShape,
@@ -66,7 +75,10 @@ export function CanvasPage({ user }: CanvasPageProps) {
     sendToBack,
     bringForward,
     sendBackward,
-  } = useBoard(boardId!, user)
+  } = useBoard(boardId!, user, boardMeta?.title)
+
+  // Displayed title: Yjs is the source of truth, localStorage is fallback
+  const displayTitle = yjsBoardTitle ?? boardMeta?.title ?? 'Untitled Board'
 
   // Pan & Zoom
   const { isPanning, setIsPanning } = useCanvasPanning({ stageRef })
@@ -78,6 +90,16 @@ export function CanvasPage({ user }: CanvasPageProps) {
     const stage = e.target.getStage()
     if (stage) setStagePos(stage.position())
   }, [baseHandleWheel])
+
+  // Reset zoom to 100% and center
+  const resetZoom = useCallback(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    stage.scale({ x: 1, y: 1 })
+    stage.position({ x: 0, y: 0 })
+    setStageScale(1)
+    setStagePos({ x: 0, y: 0 })
+  }, [])
 
   // Shape creation (click-drag)
   const { isDrawing, newShape, startCreating, updateSize, finishCreating } = useShapeCreation({
@@ -107,10 +129,24 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return Object.values(shapes).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
   }, [shapes])
 
-  // Track board visit in localStorage for dashboard listing
+  // Track board visit in localStorage. If visiting another user's board
+  // (not in our localStorage yet), register it as a visited board.
   useEffect(() => {
-    if (boardId) addBoard(boardId, 'Untitled Board')
-  }, [boardId])
+    if (!boardId) return
+    if (boardMeta) {
+      visitBoard(boardId)
+    } else {
+      addBoard(boardId, 'Untitled Board', false)
+    }
+  }, [boardId, boardMeta])
+
+  // When the Yjs title arrives, sync it back to localStorage
+  // (covers visitors seeing a placeholder until Yjs syncs)
+  useEffect(() => {
+    if (boardId && yjsBoardTitle) {
+      updateBoardTitle(boardId, yjsBoardTitle)
+    }
+  }, [boardId, yjsBoardTitle])
 
   // Window resize
   useEffect(() => {
@@ -139,6 +175,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     sendToBack,
     bringForward,
     sendBackward,
+    resetZoom,
   })
 
   // Cursor style (needed by mouse handlers below)
@@ -293,6 +330,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
         onlineUsers={onlineUsers}
         currentUserId={user.userId}
         onSignOut={signOut}
+        boardTitle={displayTitle}
+        onNavigateHome={() => navigate('/')}
       />
       <Stage
         ref={stageRef}
@@ -353,6 +392,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
       </Stage>
       <Toolbar selectedTool={tool} onSelectTool={setTool} />
       <UndoRedoButtons onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
+      <ZoomControls scale={stageScale} onResetZoom={resetZoom} />
       {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
         <FloatingToolbar
           shape={shapes[selectedShapeId]}
