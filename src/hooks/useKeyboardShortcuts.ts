@@ -9,6 +9,10 @@
  * - Arrow keys: Nudge selected shape by 1px (10px with Shift)
  * - Escape: Deselect and switch to select tool
  * - Ctrl/Cmd+A: Select all (prevent default — multi-select comes later)
+ * - ] : Bring selected shape to front (highest zIndex)
+ * - [ : Send selected shape to back (lowest zIndex)
+ * - Ctrl/Cmd+] : Bring selected shape forward one step
+ * - Ctrl/Cmd+[ : Send selected shape backward one step
  *
  * V2 approach: operates directly on Yjs via useBoard callbacks (addShape,
  * updateShape, removeShape). No local stores or Firebase persistence needed.
@@ -27,6 +31,10 @@ interface UseKeyboardShortcutsOptions {
   removeShape: (id: string) => void
   undo: () => void
   redo: () => void
+  bringToFront: (id: string) => void
+  sendToBack: (id: string) => void
+  bringForward: (id: string) => void
+  sendBackward: (id: string) => void
 }
 
 export function useKeyboardShortcuts({
@@ -39,6 +47,10 @@ export function useKeyboardShortcuts({
   removeShape,
   undo,
   redo,
+  bringToFront,
+  sendToBack,
+  bringForward,
+  sendBackward,
 }: UseKeyboardShortcutsOptions) {
   // Store mutable values in refs so the keydown listener always reads fresh state
   // without needing to re-register on every render.
@@ -52,6 +64,8 @@ export function useKeyboardShortcuts({
     removeShape,
     undo,
     redo,
+    bringToFront,
+    sendToBack,
   })
 
   useEffect(() => {
@@ -65,6 +79,8 @@ export function useKeyboardShortcuts({
       removeShape,
       undo,
       redo,
+      bringToFront,
+      sendToBack,
     }
   })
 
@@ -90,6 +106,8 @@ export function useKeyboardShortcuts({
         removeShape,
         undo,
         redo,
+        bringToFront,
+        sendToBack,
       } = stateRef.current
 
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -151,6 +169,34 @@ export function useKeyboardShortcuts({
         return
       }
 
+      // Ctrl+] — bring selected shape to front (all the way)
+      if (modKey && e.key === ']' && selectedShapeId) {
+        e.preventDefault()
+        bringToFront(selectedShapeId)
+        return
+      }
+
+      // Ctrl+[ — send selected shape to back (all the way)
+      if (modKey && e.key === '[' && selectedShapeId) {
+        e.preventDefault()
+        sendToBack(selectedShapeId)
+        return
+      }
+
+      // ] — bring selected shape forward one step
+      if (e.key === ']' && selectedShapeId) {
+        e.preventDefault()
+        bringForward(selectedShapeId)
+        return
+      }
+
+      // [ — send selected shape backward one step
+      if (e.key === '[' && selectedShapeId) {
+        e.preventDefault()
+        sendBackward(selectedShapeId)
+        return
+      }
+
       // Arrow keys — nudge selected shape
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         if (!selectedShapeId) return
@@ -187,5 +233,6 @@ export function useKeyboardShortcuts({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reads from stateRef, not deps
   }, [])
 }
