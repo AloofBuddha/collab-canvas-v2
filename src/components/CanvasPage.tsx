@@ -21,14 +21,15 @@ import DimensionLabel from './DimensionLabel'
 import RemoteCursor from './RemoteCursor'
 import GridBackground from './GridBackground'
 import Toolbar from './Toolbar'
+import UndoRedoButtons from './UndoRedoButtons'
 import FloatingToolbar from './FloatingToolbar'
 import InlineTextEditor from './InlineTextEditor'
 import Header from './Header'
 import { getCursorStyle } from '../utils/canvasUtils'
 import { getPointerPosition } from '../utils/shapeManipulation'
 import type { Tool, Shape, User, TextShape, StickyNoteShape } from '../types'
-import { HEADER_HEIGHT } from '../utils/canvasConstants'
 import { signOut } from '../utils/auth'
+import { addBoard } from '../utils/boardStorage'
 
 interface CanvasPageProps {
   user: User
@@ -42,7 +43,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const [stageScale, setStageScale] = useState(1)
   const [windowSize, setWindowSize] = useState({
     width: window.innerWidth,
-    height: window.innerHeight - HEADER_HEIGHT,
+    height: window.innerHeight,
   })
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
@@ -59,6 +60,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
     removeShape,
     undo,
     redo,
+    canUndo,
+    canRedo,
     bringToFront,
     sendToBack,
     bringForward,
@@ -104,12 +107,17 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return Object.values(shapes).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
   }, [shapes])
 
+  // Track board visit in localStorage for dashboard listing
+  useEffect(() => {
+    if (boardId) addBoard(boardId, 'Untitled Board')
+  }, [boardId])
+
   // Window resize
   useEffect(() => {
     const handleResize = () => {
       setWindowSize({
         width: window.innerWidth,
-        height: window.innerHeight - HEADER_HEIGHT,
+        height: window.innerHeight,
       })
     }
     window.addEventListener('resize', handleResize)
@@ -294,7 +302,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
-        style={{ background: '#fafafa' }}
+        style={{ position: 'fixed', top: 0, left: 0 }}
       >
         {/* Grid background */}
         <GridBackground
@@ -344,12 +352,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
         </Layer>
       </Stage>
       <Toolbar selectedTool={tool} onSelectTool={setTool} />
+      <UndoRedoButtons onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
       {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
         <FloatingToolbar
           shape={shapes[selectedShapeId]}
           stageScale={stageScale}
           stagePos={stagePos}
-          headerHeight={HEADER_HEIGHT}
           updateShape={updateShape}
           removeShape={removeShape}
           bringToFront={bringToFront}

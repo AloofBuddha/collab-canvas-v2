@@ -9,7 +9,6 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { TextShape, StickyNoteShape } from '../types'
-import { HEADER_HEIGHT } from '../utils/canvasConstants'
 import styles from './InlineTextEditor.module.css'
 
 type EditableShape = TextShape | StickyNoteShape
@@ -74,7 +73,7 @@ export default function InlineTextEditor({
 
   // Convert shape world-space coords to screen-space
   const screenX = shape.x * stageScale + stagePos.x
-  const screenY = shape.y * stageScale + stagePos.y + HEADER_HEIGHT
+  const screenY = shape.y * stageScale + stagePos.y
   const width = shape.width * stageScale
   const height = shape.height * stageScale
   const fontSize = shape.fontSize * stageScale

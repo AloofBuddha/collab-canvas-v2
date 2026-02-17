@@ -42,6 +42,11 @@ export default function GridBackground({ width, height, scale, offsetX, offsetY 
   const sceneFunc = useCallback((context: Konva.Context) => {
     const { startX, startY, endX, endY } = renderBounds
 
+    // Fill the entire grid area with white so the background
+    // stays consistent when panning beyond the Stage CSS bounds
+    context.fillStyle = '#fafafa'
+    context.fillRect(startX, startY, endX - startX, endY - startY)
+
     for (let x = startX; x <= endX; x += gridSize) {
       const isMainLine = x % (gridSize * 5) === 0
       context.strokeStyle = isMainLine ? '#e0e0e0' : '#f0f0f0'

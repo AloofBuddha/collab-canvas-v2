@@ -22,7 +22,6 @@ interface FloatingToolbarProps {
   shape: Shape
   stageScale: number
   stagePos: { x: number; y: number }
-  headerHeight: number
   updateShape: (id: string, updates: Partial<Shape>) => void
   removeShape: (id: string) => void
   bringToFront: (id: string) => void
@@ -36,7 +35,6 @@ export default function FloatingToolbar({
   shape,
   stageScale,
   stagePos,
-  headerHeight,
   updateShape,
   removeShape,
   bringToFront,
@@ -62,10 +60,10 @@ export default function FloatingToolbar({
 
     // World → screen
     const screenX = centerX * stageScale + stagePos.x
-    const screenY = topY * stageScale + stagePos.y + headerHeight
+    const screenY = topY * stageScale + stagePos.y
 
     return { x: screenX, y: screenY }
-  }, [shape, stageScale, stagePos, headerHeight])
+  }, [shape, stageScale, stagePos])
 
   const hasStroke = shape.type === 'rectangle' || shape.type === 'circle' || shape.type === 'line'
 
