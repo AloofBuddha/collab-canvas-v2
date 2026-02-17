@@ -46,6 +46,12 @@ export async function signInWithGoogle(): Promise<AuthResult> {
     await signInWithPopup(auth, googleProvider)
     return { success: true }
   } catch (error) {
+    // User closing the popup is not an error — silently return success:false
+    // without an error message so the UI stays clean.
+    const code = (error as { code?: string }).code
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      return { success: false }
+    }
     return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
   }
 }

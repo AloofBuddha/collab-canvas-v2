@@ -131,16 +131,9 @@ export default function AuthPage() {
           type="button"
           onClick={async () => {
             setError('')
-            setLoading(true)
-            try {
-              const result = await signInWithGoogle()
-              if (!result.success && result.error) {
-                setError(parseFirebaseError(result.error))
-              }
-            } catch {
-              setError('An unexpected error occurred')
-            } finally {
-              setLoading(false)
+            const result = await signInWithGoogle()
+            if (!result.success && result.error) {
+              setError(parseFirebaseError(result.error))
             }
           }}
           disabled={loading}
