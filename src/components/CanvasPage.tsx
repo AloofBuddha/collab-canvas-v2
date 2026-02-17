@@ -14,14 +14,19 @@ import { useCanvasPanning } from '../hooks/useCanvasPanning'
 import { useCanvasZoom } from '../hooks/useCanvasZoom'
 import { useShapeCreation } from '../hooks/useShapeCreation'
 import { useShapeDragging } from '../hooks/useShapeDragging'
+import { useShapeResize } from '../hooks/useShapeResize'
+import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import ShapeRenderer, { NewShapeRenderer } from './ShapeRenderer'
+import DimensionLabel from './DimensionLabel'
 import RemoteCursor from './RemoteCursor'
 import GridBackground from './GridBackground'
 import Toolbar from './Toolbar'
+import FloatingToolbar from './FloatingToolbar'
+import InlineTextEditor from './InlineTextEditor'
 import Header from './Header'
 import { getCursorStyle } from '../utils/canvasUtils'
 import { getPointerPosition } from '../utils/shapeManipulation'
-import type { Tool, Shape, User } from '../types'
+import type { Tool, Shape, User, TextShape, StickyNoteShape } from '../types'
 import { HEADER_HEIGHT } from '../utils/canvasConstants'
 import { signOut } from '../utils/auth'
 
@@ -40,6 +45,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     height: window.innerHeight - HEADER_HEIGHT,
   })
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
+  const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
 
   // Core Yjs hook — shapes, cursors, CRUD
   const {
@@ -78,6 +84,15 @@ export function CanvasPage({ user }: CanvasPageProps) {
     updateShape,
   })
 
+  // Shape resizing
+  const {
+    tryStartResize,
+    handleResizeMove,
+    handleResizeEnd,
+    isResizing,
+    getHandleCursor,
+  } = useShapeResize({ shapes, updateShape, stageScale })
+
   // Sorted shapes for rendering (by zIndex)
   const sortedShapes = useMemo(() => {
     return Object.values(shapes).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
@@ -95,17 +110,19 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Delete selected shape
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedShapeId) {
-        removeShape(selectedShapeId)
-        setSelectedShapeId(null)
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [selectedShapeId, removeShape])
+  // Keyboard shortcuts (Delete, Ctrl+D, arrow nudge, Escape, Ctrl+A)
+  useKeyboardShortcuts({
+    shapes,
+    selectedShapeId,
+    setSelectedShapeId,
+    setTool,
+    addShape,
+    updateShape,
+    removeShape,
+  })
+
+  // Cursor style (needed by mouse handlers below)
+  const cursorStyle = getCursorStyle(isPanning, isDrawing, tool)
 
   // --- Mouse handlers ---
 
@@ -141,24 +158,56 @@ export function CanvasPage({ user }: CanvasPageProps) {
       if (pos) {
         updateCursor({ x: pos.x, y: pos.y })
       }
+
+      // If actively resizing, update shape dimensions
+      if (isResizing()) {
+        handleResizeMove(stage)
+        return
+      }
+
+      // Update cursor style when hovering over resize handles of selected shape
+      if (selectedShapeId && tool === 'select' && !isDrawing && !isPanning) {
+        const handleCursor = getHandleCursor(stage, selectedShapeId)
+        const container = stage.container()
+        if (handleCursor) {
+          container.style.cursor = handleCursor
+        } else {
+          container.style.cursor = cursorStyle
+        }
+      }
     }
 
     // Update shape creation preview
     if (isDrawing) {
       updateSize(e)
     }
-  }, [updateCursor, isDrawing, updateSize])
+  }, [updateCursor, isDrawing, updateSize, isResizing, handleResizeMove, selectedShapeId, tool, isPanning, getHandleCursor, cursorStyle])
 
   const handleMouseUp = useCallback(() => {
+    if (isResizing()) {
+      handleResizeEnd()
+      return
+    }
     if (isDrawing) {
       finishCreating()
     }
-  }, [isDrawing, finishCreating])
+  }, [isDrawing, finishCreating, isResizing, handleResizeEnd])
 
   // Shape-level event handlers
-  const handleShapeMouseDown = useCallback((_e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => {
+  const handleShapeMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => {
     setSelectedShapeId(shapeId)
-  }, [])
+
+    // If shape is already selected, check if clicking on a resize handle
+    const stage = e.target.getStage()
+    if (stage && shapeId === selectedShapeId) {
+      const started = tryStartResize(stage, shapeId)
+      if (started) {
+        // Prevent Konva's native drag from interfering with resize
+        e.target.stopDrag()
+        e.cancelBubble = true
+      }
+    }
+  }, [selectedShapeId, tryStartResize])
 
   const handleShapeDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
     handleDragStart(e)
@@ -182,15 +231,31 @@ export function CanvasPage({ user }: CanvasPageProps) {
     handleDragEnd()
   }, [handleDragEnd])
 
+  // Double-click to edit text/sticky inline
+  const handleDoubleClick = useCallback((shapeId: string) => {
+    const shape = shapes[shapeId]
+    if (shape && (shape.type === 'text' || shape.type === 'sticky')) {
+      setEditingShapeId(shapeId)
+    }
+  }, [shapes])
+
+  const handleTextSave = useCallback((text: string) => {
+    if (editingShapeId) {
+      updateShape(editingShapeId, { text } as Partial<Shape>)
+    }
+    setEditingShapeId(null)
+  }, [editingShapeId, updateShape])
+
+  const handleTextCancel = useCallback(() => {
+    setEditingShapeId(null)
+  }, [])
+
   // Sync stage position after panning ends
   useEffect(() => {
     if (!isPanning && stageRef.current) {
       setStagePos(stageRef.current.position())
     }
   }, [isPanning])
-
-  // Cursor style
-  const cursorStyle = getCursorStyle(isPanning, isDrawing, tool)
 
   // Apply cursor to stage container
   useEffect(() => {
@@ -235,13 +300,23 @@ export function CanvasPage({ user }: CanvasPageProps) {
               key={shape.id}
               shape={shape}
               isSelected={shape.id === selectedShapeId}
+              isEditing={shape.id === editingShapeId}
               stageScale={stageScale}
               onMouseDown={handleShapeMouseDown}
               onDragStart={handleShapeDragStart}
               onDragMove={handleShapeDragMove}
               onDragEnd={handleShapeDragEnd}
+              onDoubleClick={handleDoubleClick}
             />
           ))}
+
+          {/* Dimension label for selected shape */}
+          {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
+            <DimensionLabel
+              shape={shapes[selectedShapeId]}
+              stageScale={stageScale}
+            />
+          )}
 
           {/* Creation preview */}
           {isDrawing && newShape && <NewShapeRenderer shape={newShape} />}
@@ -257,6 +332,26 @@ export function CanvasPage({ user }: CanvasPageProps) {
         </Layer>
       </Stage>
       <Toolbar selectedTool={tool} onSelectTool={setTool} />
+      {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
+        <FloatingToolbar
+          shape={shapes[selectedShapeId]}
+          stageScale={stageScale}
+          stagePos={stagePos}
+          headerHeight={HEADER_HEIGHT}
+          updateShape={updateShape}
+          removeShape={removeShape}
+          onDeselect={() => setSelectedShapeId(null)}
+        />
+      )}
+      {editingShapeId && shapes[editingShapeId] && (
+        <InlineTextEditor
+          shape={shapes[editingShapeId] as TextShape | StickyNoteShape}
+          stageScale={stageScale}
+          stagePos={stagePos}
+          onSave={handleTextSave}
+          onCancel={handleTextCancel}
+        />
+      )}
     </>
   )
 }
