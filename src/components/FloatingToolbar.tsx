@@ -13,7 +13,7 @@
  */
 
 import { useMemo } from 'react'
-import { Trash2 } from 'lucide-react'
+import { Trash2, ArrowUpToLine, ArrowDownToLine, ArrowUp, ArrowDown } from 'lucide-react'
 import type { Shape } from '../types'
 import { getShapeWidth } from '../utils/shapeManipulation'
 import styles from './FloatingToolbar.module.css'
@@ -25,6 +25,10 @@ interface FloatingToolbarProps {
   headerHeight: number
   updateShape: (id: string, updates: Partial<Shape>) => void
   removeShape: (id: string) => void
+  bringToFront: (id: string) => void
+  sendToBack: (id: string) => void
+  bringForward: (id: string) => void
+  sendBackward: (id: string) => void
   onDeselect: () => void
 }
 
@@ -35,6 +39,10 @@ export default function FloatingToolbar({
   headerHeight,
   updateShape,
   removeShape,
+  bringToFront,
+  sendToBack,
+  bringForward,
+  sendBackward,
   onDeselect,
 }: FloatingToolbarProps) {
   // Convert shape world-space position to screen-space
@@ -171,6 +179,41 @@ export default function FloatingToolbar({
             title="Opacity"
           />
         </div>
+
+        {/* Layer ordering */}
+        <div className={styles.separator} />
+        <button
+          className={styles.layerButton}
+          onClick={() => bringToFront(shape.id)}
+          title="Bring to front (Ctrl+])"
+          aria-label="Bring to front"
+        >
+          <ArrowUpToLine size={14} />
+        </button>
+        <button
+          className={styles.layerButton}
+          onClick={() => bringForward(shape.id)}
+          title="Bring forward (])"
+          aria-label="Bring forward"
+        >
+          <ArrowUp size={14} />
+        </button>
+        <button
+          className={styles.layerButton}
+          onClick={() => sendBackward(shape.id)}
+          title="Send backward ([)"
+          aria-label="Send backward"
+        >
+          <ArrowDown size={14} />
+        </button>
+        <button
+          className={styles.layerButton}
+          onClick={() => sendToBack(shape.id)}
+          title="Send to back (Ctrl+[)"
+          aria-label="Send to back"
+        >
+          <ArrowDownToLine size={14} />
+        </button>
 
         {/* Delete */}
         <div className={styles.separator} />

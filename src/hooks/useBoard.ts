@@ -177,6 +177,86 @@ export function useBoard(boardId: string, user?: User) {
     shapesMapRef.current?.delete(id)
   }, [])
 
+  const bringToFront = useCallback((id: string) => {
+    const map = shapesMapRef.current
+    if (!map) return
+    const shape = map.get(id)
+    if (!shape) return
+    let maxZ = 0
+    map.forEach((s) => {
+      const z = s.zIndex ?? 0
+      if (z > maxZ) maxZ = z
+    })
+    const currentZ = shape.zIndex ?? 0
+    if (currentZ < maxZ) {
+      map.set(id, { ...shape, zIndex: maxZ + 1 })
+    }
+  }, [])
+
+  const sendToBack = useCallback((id: string) => {
+    const map = shapesMapRef.current
+    if (!map) return
+    const shape = map.get(id)
+    if (!shape) return
+    let minZ = 0
+    map.forEach((s) => {
+      const z = s.zIndex ?? 0
+      if (z < minZ) minZ = z
+    })
+    const currentZ = shape.zIndex ?? 0
+    if (currentZ > minZ) {
+      map.set(id, { ...shape, zIndex: minZ - 1 })
+    }
+  }, [])
+
+  const bringForward = useCallback((id: string) => {
+    const map = shapesMapRef.current
+    if (!map) return
+    const shape = map.get(id)
+    if (!shape) return
+    const currentZ = shape.zIndex ?? 0
+    // Find the smallest zIndex above the current shape
+    let nextZ: number | null = null
+    let nextId: string | null = null
+    map.forEach((s, sId) => {
+      const z = s.zIndex ?? 0
+      if (z > currentZ && (nextZ === null || z < nextZ)) {
+        nextZ = z
+        nextId = sId
+      }
+    })
+    if (nextZ !== null && nextId !== null) {
+      // Swap zIndex values with the shape directly above
+      const nextShape = map.get(nextId)!
+      map.set(id, { ...shape, zIndex: nextZ })
+      map.set(nextId, { ...nextShape, zIndex: currentZ })
+    }
+  }, [])
+
+  const sendBackward = useCallback((id: string) => {
+    const map = shapesMapRef.current
+    if (!map) return
+    const shape = map.get(id)
+    if (!shape) return
+    const currentZ = shape.zIndex ?? 0
+    // Find the largest zIndex below the current shape
+    let prevZ: number | null = null
+    let prevId: string | null = null
+    map.forEach((s, sId) => {
+      const z = s.zIndex ?? 0
+      if (z < currentZ && (prevZ === null || z > prevZ)) {
+        prevZ = z
+        prevId = sId
+      }
+    })
+    if (prevZ !== null && prevId !== null) {
+      // Swap zIndex values with the shape directly below
+      const prevShape = map.get(prevId)!
+      map.set(id, { ...shape, zIndex: prevZ })
+      map.set(prevId, { ...prevShape, zIndex: currentZ })
+    }
+  }, [])
+
   return {
     shapes,
     remoteCursors,
@@ -186,5 +266,9 @@ export function useBoard(boardId: string, user?: User) {
     addShape,
     updateShape,
     removeShape,
+    bringToFront,
+    sendToBack,
+    bringForward,
+    sendBackward,
   }
 }

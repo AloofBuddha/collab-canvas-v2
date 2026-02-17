@@ -57,6 +57,10 @@ export function CanvasPage({ user }: CanvasPageProps) {
     addShape,
     updateShape,
     removeShape,
+    bringToFront,
+    sendToBack,
+    bringForward,
+    sendBackward,
   } = useBoard(boardId!, user)
 
   // Pan & Zoom
@@ -119,6 +123,10 @@ export function CanvasPage({ user }: CanvasPageProps) {
     addShape,
     updateShape,
     removeShape,
+    bringToFront,
+    sendToBack,
+    bringForward,
+    sendBackward,
   })
 
   // Cursor style (needed by mouse handlers below)
@@ -340,6 +348,10 @@ export function CanvasPage({ user }: CanvasPageProps) {
           headerHeight={HEADER_HEIGHT}
           updateShape={updateShape}
           removeShape={removeShape}
+          bringToFront={bringToFront}
+          sendToBack={sendToBack}
+          bringForward={bringForward}
+          sendBackward={sendBackward}
           onDeselect={() => setSelectedShapeId(null)}
         />
       )}
