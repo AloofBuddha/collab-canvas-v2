@@ -1,0 +1,11 @@
+.editor {
+  position: fixed;
+  z-index: 50;
+  border: 2px solid #3B82F6;
+  outline: none;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.2;
+  box-sizing: border-box;
+  margin: 0;
+}
