@@ -25,3 +25,9 @@ export const SHAPE_OPACITY = 0.8
 export const NEW_SHAPE_OPACITY = 0.5
 export const NEW_SHAPE_STROKE_WIDTH = 2
 export const NEW_SHAPE_DASH = [5, 5]
+
+// Selection/border colors
+export const SELECTION_COLOR = '#3B82F6'
+export const LINE_HANDLE_FILL = '#3B82F6'
+export const LINE_HANDLE_STROKE = '#FFFFFF'
+export const NEW_SHAPE_COLOR = '#D1D5DB'
