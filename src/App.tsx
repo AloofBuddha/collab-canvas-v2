@@ -33,11 +33,7 @@ function App() {
   }, [])
 
   if (authStatus === 'loading') {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        Loading...
-      </div>
-    )
+    return <div className="loadingScreen">Loading...</div>
   }
 
   if (authStatus === 'unauthenticated') {
