@@ -3,14 +3,15 @@
  *
  * Ported from V1, simplified for V2:
  * - No locking (Yjs CRDT handles conflicts)
- * - No dimension labels or manipulation handles (MVP)
  * - Added sticky note rendering
+ * - Resize handles on selected shapes (corners + edges)
  */
 
 import { Fragment } from 'react'
 import { Rect, Ellipse, Line, Text as KonvaText, Group, Circle } from 'react-konva'
 import Konva from 'konva'
 import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape } from '../types'
+import { getShapeWidth, getShapeHeight } from '../utils/shapeManipulation'
 import {
   SELECTION_COLOR,
   LINE_HANDLE_FILL,
@@ -18,9 +19,63 @@ import {
   NEW_SHAPE_COLOR,
 } from '../utils/canvasConstants'
 
+const HANDLE_SIZE = 8
+const HANDLE_FILL = '#FFFFFF'
+const HANDLE_STROKE = SELECTION_COLOR
+const HANDLE_STROKE_WIDTH = 1.5
+
+/**
+ * Renders resize handles (corners + edges) around a selected shape.
+ * Handles are rendered in the Group's local coordinate space (centered on shape).
+ */
+function ResizeHandles({ shape, stageScale }: { shape: Shape; stageScale: number }) {
+  if (shape.type === 'line') return null // Lines use endpoint handles instead
+
+  const w = getShapeWidth(shape)
+  const h = getShapeHeight(shape)
+  const halfW = w / 2
+  const halfH = h / 2
+  const size = HANDLE_SIZE / stageScale
+  const halfSize = size / 2
+  const strokeWidth = HANDLE_STROKE_WIDTH / stageScale
+
+  // Corner and edge handle positions (in local coords, origin at shape center)
+  const handles = [
+    // Corners
+    { x: -halfW - halfSize, y: -halfH - halfSize },
+    { x: halfW - halfSize, y: -halfH - halfSize },
+    { x: -halfW - halfSize, y: halfH - halfSize },
+    { x: halfW - halfSize, y: halfH - halfSize },
+    // Edge midpoints
+    { x: -halfSize, y: -halfH - halfSize },
+    { x: -halfSize, y: halfH - halfSize },
+    { x: -halfW - halfSize, y: -halfSize },
+    { x: halfW - halfSize, y: -halfSize },
+  ]
+
+  return (
+    <Fragment>
+      {handles.map((pos, i) => (
+        <Rect
+          key={i}
+          x={pos.x}
+          y={pos.y}
+          width={size}
+          height={size}
+          fill={HANDLE_FILL}
+          stroke={HANDLE_STROKE}
+          strokeWidth={strokeWidth}
+          listening={false}
+        />
+      ))}
+    </Fragment>
+  )
+}
+
 interface ShapeRendererProps {
   shape: Shape
   isSelected: boolean
+  isEditing?: boolean
   stageScale: number
   onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => void
   onDragStart: (e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => void
@@ -32,6 +87,7 @@ interface ShapeRendererProps {
 export default function ShapeRenderer({
   shape,
   isSelected,
+  isEditing,
   stageScale,
   onMouseDown,
   onDragStart,
@@ -90,6 +146,7 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
+            {isSelected && <ResizeHandles shape={rect} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -100,6 +157,10 @@ export default function ShapeRenderer({
         const selectionPadding = shapeStrokeWidth / 2 + inverseBorderWidth / 2
         const selectionRadiusX = circle.radiusX + selectionPadding
         const selectionRadiusY = circle.radiusY + selectionPadding
+        // Bounding box for hit region so corner handles are clickable
+        const bbWidth = circle.radiusX * 2
+        const bbHeight = circle.radiusY * 2
+        const handlePadding = HANDLE_SIZE / stageScale
 
         return (
           <Group
@@ -109,6 +170,18 @@ export default function ShapeRenderer({
             draggable
             {...groupEvents}
           >
+            {/* Invisible bounding-box hit region — extends to cover resize handles
+                so clicks on corner handles don't fall through to the Stage */}
+            {isSelected && (
+              <Rect
+                width={bbWidth + handlePadding * 2}
+                height={bbHeight + handlePadding * 2}
+                offsetX={bbWidth / 2 + handlePadding}
+                offsetY={bbHeight / 2 + handlePadding}
+                fill="transparent"
+                listening={true}
+              />
+            )}
             <Ellipse
               radiusX={circle.radiusX}
               radiusY={circle.radiusY}
@@ -127,6 +200,7 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
+            {isSelected && <ResizeHandles shape={circle} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -220,18 +294,21 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
-            <KonvaText
-              offsetX={text.width / 2}
-              offsetY={text.height / 2}
-              text={text.text}
-              fontSize={text.fontSize}
-              fontFamily={text.fontFamily}
-              fill={text.textColor}
-              width={text.width}
-              height={text.height}
-              align={text.align || 'left'}
-              verticalAlign={text.verticalAlign || 'top'}
-            />
+            {!isEditing && (
+              <KonvaText
+                offsetX={text.width / 2}
+                offsetY={text.height / 2}
+                text={text.text}
+                fontSize={text.fontSize}
+                fontFamily={text.fontFamily}
+                fill={text.textColor}
+                width={text.width}
+                height={text.height}
+                align={text.align || 'left'}
+                verticalAlign={text.verticalAlign || 'top'}
+              />
+            )}
+            {isSelected && !isEditing && <ResizeHandles shape={text} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -272,18 +349,21 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
-            <KonvaText
-              offsetX={sticky.width / 2}
-              offsetY={sticky.height / 2}
-              text={sticky.text}
-              fontSize={sticky.fontSize}
-              fill="#1F2937"
-              width={sticky.width}
-              height={sticky.height}
-              padding={12}
-              align="left"
-              verticalAlign="top"
-            />
+            {!isEditing && (
+              <KonvaText
+                offsetX={sticky.width / 2}
+                offsetY={sticky.height / 2}
+                text={sticky.text}
+                fontSize={sticky.fontSize}
+                fill="#1F2937"
+                width={sticky.width}
+                height={sticky.height}
+                padding={12}
+                align="left"
+                verticalAlign="top"
+              />
+            )}
+            {isSelected && !isEditing && <ResizeHandles shape={sticky} stageScale={stageScale} />}
           </Group>
         )
       }
