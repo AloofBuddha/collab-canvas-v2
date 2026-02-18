@@ -1,8 +1,8 @@
 /**
  * CanvasPage - Main canvas orchestration component
  *
- * Rewritten for V2: wires useBoard (Yjs), pan/zoom, shape creation, and dragging.
- * References V1's Canvas.tsx mouse handler flow but is much simpler (~200 lines vs 924).
+ * Rewritten for V2: wires useBoard (Yjs), pan/zoom, shape creation, dragging,
+ * and multi-select (drag-to-select, shift+click, Ctrl+A, group drag).
  */
 
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
@@ -16,7 +16,9 @@ import { useShapeCreation } from '../hooks/useShapeCreation'
 import { useShapeDragging } from '../hooks/useShapeDragging'
 import { useShapeResize } from '../hooks/useShapeResize'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+import { useMultiSelect } from '../hooks/useMultiSelect'
 import ShapeRenderer, { NewShapeRenderer } from './ShapeRenderer'
+import { DragSelectRect, MultiSelectBounds } from './SelectionOverlay'
 import DimensionLabel from './DimensionLabel'
 import RemoteCursor from './RemoteCursor'
 import GridBackground from './GridBackground'
@@ -44,7 +46,6 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const navigate = useNavigate()
   const stageRef = useRef<Konva.Stage>(null)
   const [tool, setTool] = useState<Tool>('select')
-  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null)
   const [stageScale, setStageScale] = useState(1)
   const [windowSize, setWindowSize] = useState({
     width: window.innerWidth,
@@ -61,7 +62,6 @@ export function CanvasPage({ user }: CanvasPageProps) {
   }, [boardId])
 
   // Core Yjs hook — shapes, cursors, CRUD, board title
-  // Pass localStorage title so the creator can initialize it in Yjs
   const {
     shapes,
     remoteCursors,
@@ -89,6 +89,24 @@ export function CanvasPage({ user }: CanvasPageProps) {
 
   // Displayed title: Yjs is the source of truth, localStorage is fallback
   const displayTitle = yjsBoardTitle ?? boardMeta?.title ?? 'Untitled Board'
+
+  // Multi-select
+  const {
+    selectedShapeIds,
+    selectedShapeId,
+    selectionBox,
+    isSelecting,
+    handleShapeClick,
+    handleStageClick,
+    selectAll,
+    deselectAll,
+    selectShape,
+    startSelection,
+    updateSelection,
+    finishSelection,
+    cancelSelection,
+    setSelectedShapeIds,
+  } = useMultiSelect()
 
   // Pan & Zoom
   const { isPanning, setIsPanning } = useCanvasPanning({ stageRef })
@@ -124,7 +142,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     isPanning,
     updateShape,
     addShape,
-    setSelectedShapeId,
+    setSelectedShapeId: selectShape,
   })
 
   // Shape resizing
@@ -141,8 +159,14 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return Object.values(shapes).sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
   }, [shapes])
 
-  // Track board visit in localStorage. If visiting another user's board
-  // (not in our localStorage yet), register it as a visited board.
+  // Selected shapes array for multi-select bounding box
+  const selectedShapes = useMemo(() => {
+    return Array.from(selectedShapeIds)
+      .map(id => shapes[id])
+      .filter(Boolean)
+  }, [selectedShapeIds, shapes])
+
+  // Track board visit in localStorage
   useEffect(() => {
     if (!boardId) return
     if (boardMeta) {
@@ -153,7 +177,6 @@ export function CanvasPage({ user }: CanvasPageProps) {
   }, [boardId, boardMeta])
 
   // When the Yjs title arrives, sync it back to localStorage
-  // (covers visitors seeing a placeholder until Yjs syncs)
   useEffect(() => {
     if (boardId && yjsBoardTitle) {
       updateBoardTitle(boardId, yjsBoardTitle)
@@ -172,11 +195,14 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
-  // Keyboard shortcuts (Delete, Ctrl+D, arrow nudge, Escape, Ctrl+A)
+  // Keyboard shortcuts
   useKeyboardShortcuts({
     shapes,
+    selectedShapeIds,
     selectedShapeId,
-    setSelectedShapeId,
+    deselectAll,
+    selectAll,
+    setSelectedShapeIds,
     setTool,
     addShape,
     updateShape,
@@ -192,7 +218,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     onToggleAI: () => setShowAIInput(prev => !prev),
   })
 
-  // Cursor style (needed by mouse handlers below)
+  // Cursor style
   const cursorStyle = getCursorStyle(isPanning, isDrawing, tool)
 
   // --- Mouse handlers ---
@@ -213,13 +239,21 @@ export function CanvasPage({ user }: CanvasPageProps) {
       // Shape creation tool active → start drawing
       startCreating(e)
     } else {
-      // Select tool — clicked on empty canvas → deselect
+      // Select tool — clicked on empty canvas
       const clickedOnStage = e.target === e.target.getStage()
       if (clickedOnStage) {
-        setSelectedShapeId(null)
+        // Start drag-to-select
+        const stage = e.target.getStage()
+        if (stage) {
+          const pos = getPointerPosition(stage)
+          if (pos) {
+            handleStageClick() // deselect first
+            startSelection(pos.x, pos.y)
+          }
+        }
       }
     }
-  }, [tool, startCreating, setIsPanning])
+  }, [tool, startCreating, setIsPanning, handleStageClick, startSelection])
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     // Update cursor position for remote presence
@@ -233,6 +267,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
       // If actively resizing, update shape dimensions
       if (isResizing()) {
         handleResizeMove(stage)
+        return
+      }
+
+      // Update drag-to-select box
+      if (isSelecting && pos) {
+        updateSelection(pos.x, pos.y)
         return
       }
 
@@ -252,33 +292,42 @@ export function CanvasPage({ user }: CanvasPageProps) {
     if (isDrawing) {
       updateSize(e)
     }
-  }, [updateCursor, isDrawing, updateSize, isResizing, handleResizeMove, selectedShapeId, tool, isPanning, getHandleCursor, cursorStyle])
+  }, [updateCursor, isDrawing, updateSize, isResizing, handleResizeMove, isSelecting, updateSelection, selectedShapeId, tool, isPanning, getHandleCursor, cursorStyle])
 
   const handleMouseUp = useCallback(() => {
     if (isResizing()) {
       handleResizeEnd()
       return
     }
+    if (isSelecting) {
+      finishSelection(shapes)
+      return
+    }
     if (isDrawing) {
       finishCreating()
     }
-  }, [isDrawing, finishCreating, isResizing, handleResizeEnd])
+  }, [isDrawing, finishCreating, isResizing, handleResizeEnd, isSelecting, finishSelection, shapes])
 
   // Shape-level event handlers
   const handleShapeMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => {
-    setSelectedShapeId(shapeId)
+    // Cancel any active drag-selection
+    if (isSelecting) {
+      cancelSelection()
+    }
 
-    // If shape is already selected, check if clicking on a resize handle
+    // Shift+click = toggle multi-select; normal click = single select
+    handleShapeClick(shapeId, e.evt.shiftKey)
+
+    // If shape is already selected (single select), check if clicking on a resize handle
     const stage = e.target.getStage()
-    if (stage && shapeId === selectedShapeId) {
+    if (stage && shapeId === selectedShapeId && selectedShapeIds.size === 1) {
       const started = tryStartResize(stage, shapeId)
       if (started) {
-        // Prevent Konva's native drag from interfering with resize
         e.target.stopDrag()
         e.cancelBubble = true
       }
     }
-  }, [selectedShapeId, tryStartResize])
+  }, [selectedShapeId, selectedShapeIds.size, tryStartResize, handleShapeClick, isSelecting, cancelSelection])
 
   const handleShapeDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
     handleDragStart(e, shape)
@@ -287,9 +336,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const handleShapeDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
     handleDragMove(e, shape)
 
-    // Also update cursor position during drag — Konva's native drag
-    // swallows Stage mousemove events, so remote users would see the
-    // cursor frozen at the drag-start position without this.
+    // Also update cursor position during drag
     const stage = e.target.getStage()
     if (stage) {
       const pos = getPointerPosition(stage)
@@ -301,6 +348,43 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const handleShapeDragEnd = useCallback((_shape: Shape) => {
     handleDragEnd()
   }, [handleDragEnd])
+
+  // --- Group drag for multi-select ---
+  const groupDragStartPos = useRef<{ x: number; y: number } | null>(null)
+
+  const handleGroupDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+    const node = e.target
+    groupDragStartPos.current = { x: node.x(), y: node.y() }
+  }, [])
+
+  const handleGroupDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+    if (!groupDragStartPos.current) return
+    const node = e.target
+    const deltaX = node.x() - groupDragStartPos.current.x
+    const deltaY = node.y() - groupDragStartPos.current.y
+
+    // Move all selected shapes by the delta
+    for (const id of selectedShapeIds) {
+      const shape = shapes[id]
+      if (!shape) continue
+      const updates: Partial<Shape> = {
+        x: shape.x + deltaX,
+        y: shape.y + deltaY,
+      }
+      if (shape.type === 'line') {
+        (updates as Record<string, number>).x2 = shape.x2 + deltaX;
+        (updates as Record<string, number>).y2 = shape.y2 + deltaY
+      }
+      updateShape(id, updates)
+    }
+
+    // Reset the reference point for the next delta
+    groupDragStartPos.current = { x: node.x(), y: node.y() }
+  }, [selectedShapeIds, shapes, updateShape])
+
+  const handleGroupDragEnd = useCallback(() => {
+    groupDragStartPos.current = null
+  }, [])
 
   // Double-click to edit text/sticky inline
   const handleDoubleClick = useCallback((shapeId: string) => {
@@ -372,7 +456,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
             <ShapeRenderer
               key={shape.id}
               shape={shape}
-              isSelected={shape.id === selectedShapeId}
+              isSelected={selectedShapeIds.has(shape.id)}
               isEditing={shape.id === editingShapeId}
               stageScale={stageScale}
               onMouseDown={handleShapeMouseDown}
@@ -383,12 +467,26 @@ export function CanvasPage({ user }: CanvasPageProps) {
             />
           ))}
 
-          {/* Dimension label for selected shape */}
+          {/* Multi-select bounding box with group drag */}
+          <MultiSelectBounds
+            shapes={selectedShapes}
+            stageScale={stageScale}
+            onGroupDragStart={handleGroupDragStart}
+            onGroupDragMove={handleGroupDragMove}
+            onGroupDragEnd={handleGroupDragEnd}
+          />
+
+          {/* Dimension label for single-selected shape */}
           {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
             <DimensionLabel
               shape={shapes[selectedShapeId]}
               stageScale={stageScale}
             />
+          )}
+
+          {/* Drag-to-select rectangle */}
+          {isSelecting && selectionBox && (
+            <DragSelectRect box={selectionBox} stageScale={stageScale} />
           )}
 
           {/* Creation preview */}
@@ -423,7 +521,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
           sendToBack={sendToBack}
           bringForward={bringForward}
           sendBackward={sendBackward}
-          onDeselect={() => setSelectedShapeId(null)}
+          onDeselect={deselectAll}
         />
       )}
       {editingShapeId && shapes[editingShapeId] && (
