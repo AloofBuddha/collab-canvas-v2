@@ -142,7 +142,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     isPanning,
     updateShape,
     addShape,
-    setSelectedShapeId: selectShape,
+    setSelectedShapeId: (id: string | null) => { if (id) selectShape(id) },
   })
 
   // Shape resizing
