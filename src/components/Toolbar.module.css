@@ -40,3 +40,16 @@
   background: #dbeafe;
   color: #2563eb;
 }
+
+.divider {
+  width: 1px;
+  height: 1.5rem;
+  background: #e5e7eb;
+  margin: 0.5rem 0.25rem;
+  align-self: center;
+}
+
+.toolButton.active {
+  background: var(--color-primary, #3B82F6);
+  color: white;
+}

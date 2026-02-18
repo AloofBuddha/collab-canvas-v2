@@ -26,6 +26,9 @@ import FloatingToolbar from './FloatingToolbar'
 import InlineTextEditor from './InlineTextEditor'
 import ZoomControls from './ZoomControls'
 import Header from './Header'
+import AICommandInput from './AICommandInput'
+import KeyboardShortcutsGuide from './KeyboardShortcutsGuide'
+import { useAIChat } from '../hooks/useAIChat'
 import { getCursorStyle } from '../utils/canvasUtils'
 import { getPointerPosition } from '../utils/shapeManipulation'
 import type { Tool, Shape, User, TextShape, StickyNoteShape } from '../types'
@@ -49,6 +52,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
   })
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
+  const [showShortcutsGuide, setShowShortcutsGuide] = useState(false)
+  const [showAIInput, setShowAIInput] = useState(false)
 
   // Look up known board metadata from localStorage
   const boardMeta = useMemo(() => {
@@ -76,6 +81,11 @@ export function CanvasPage({ user }: CanvasPageProps) {
     bringForward,
     sendBackward,
   } = useBoard(boardId!, user, boardMeta?.title)
+
+  // AI Chat
+  const { isLoading: aiLoading, sendMessage: aiSend } = useAIChat(
+    boardId!, user.userId, shapes, addShape, updateShape, removeShape,
+  )
 
   // Displayed title: Yjs is the source of truth, localStorage is fallback
   const displayTitle = yjsBoardTitle ?? boardMeta?.title ?? 'Untitled Board'
@@ -109,10 +119,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
     shapeType: tool === 'select' ? 'rectangle' : tool,
   })
 
-  // Shape dragging
+  // Shape dragging (with Alt+Drag duplication)
   const { handleDragStart, handleDragMove, handleDragEnd } = useShapeDragging({
     isPanning,
     updateShape,
+    addShape,
+    setSelectedShapeId,
   })
 
   // Shape resizing
@@ -176,6 +188,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
     bringForward,
     sendBackward,
     resetZoom,
+    onToggleShortcutsGuide: () => setShowShortcutsGuide(prev => !prev),
+    onToggleAI: () => setShowAIInput(prev => !prev),
   })
 
   // Cursor style (needed by mouse handlers below)
@@ -266,8 +280,8 @@ export function CanvasPage({ user }: CanvasPageProps) {
     }
   }, [selectedShapeId, tryStartResize])
 
-  const handleShapeDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
-    handleDragStart(e)
+  const handleShapeDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
+    handleDragStart(e, shape)
   }, [handleDragStart])
 
   const handleShapeDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
@@ -390,7 +404,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
           ))}
         </Layer>
       </Stage>
-      <Toolbar selectedTool={tool} onSelectTool={setTool} />
+      <Toolbar
+        selectedTool={tool}
+        onSelectTool={setTool}
+        isAIActive={showAIInput}
+        onToggleAI={() => setShowAIInput(prev => !prev)}
+      />
       <UndoRedoButtons onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
       <ZoomControls scale={stageScale} onResetZoom={resetZoom} />
       {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
@@ -414,6 +433,15 @@ export function CanvasPage({ user }: CanvasPageProps) {
           stagePos={stagePos}
           onSave={handleTextSave}
           onCancel={handleTextCancel}
+        />
+      )}
+      {showShortcutsGuide && (
+        <KeyboardShortcutsGuide onClose={() => setShowShortcutsGuide(false)} />
+      )}
+      {showAIInput && (
+        <AICommandInput
+          isExecuting={aiLoading}
+          onExecute={aiSend}
         />
       )}
     </>

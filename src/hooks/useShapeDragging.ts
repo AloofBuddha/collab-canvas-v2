@@ -4,8 +4,11 @@
  * Manages shape dragging interactions.
  * Adapted from V1: removed Firebase sync, Zustand store reads.
  * In V2, updateShape writes to Yjs Y.Map which auto-syncs to all clients.
+ *
+ * Alt+Drag: Duplicate the shape and drag the copy (original stays in place).
  */
 
+import { useRef } from 'react'
 import Konva from 'konva'
 import type { Shape } from '../types'
 import { getShapeWidth, getShapeHeight } from '../utils/shapeManipulation'
@@ -13,17 +16,40 @@ import { getShapeWidth, getShapeHeight } from '../utils/shapeManipulation'
 interface UseShapeDraggingProps {
   isPanning: boolean
   updateShape: (id: string, updates: Partial<Shape>) => void
+  addShape: (shape: Shape) => void
+  setSelectedShapeId: (id: string | null) => void
 }
 
-export function useShapeDragging({ isPanning, updateShape }: UseShapeDraggingProps) {
-  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>) => {
+export function useShapeDragging({ isPanning, updateShape, addShape, setSelectedShapeId }: UseShapeDraggingProps) {
+  // Track the alt-drag clone so handleDragMove operates on it
+  const altCloneIdRef = useRef<string | null>(null)
+
+  const handleDragStart = (e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
+    altCloneIdRef.current = null
+
     if (isPanning || e.evt.button === 1) {
       e.target.stopDrag()
+      return
+    }
+
+    // Alt+Drag: create a clone, select it, and let the drag continue on it
+    if (e.evt.altKey) {
+      const cloneId = `shape-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+      const clone: Shape = {
+        ...shape,
+        id: cloneId,
+        zIndex: Date.now(),
+      }
+      addShape(clone)
+      altCloneIdRef.current = cloneId
+      setSelectedShapeId(cloneId)
     }
   }
 
   const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
     const node = e.target
+    // If alt-cloning, apply movement to the clone, not the original
+    const targetId = altCloneIdRef.current || shape.id
 
     let updates: Partial<Shape>
 
@@ -46,12 +72,11 @@ export function useShapeDragging({ isPanning, updateShape }: UseShapeDraggingPro
       }
     }
 
-    updateShape(shape.id, updates)
+    updateShape(targetId, updates)
   }
 
   const handleDragEnd = () => {
-    // In V2, Yjs already has the latest state from handleDragMove.
-    // No separate persistence step needed.
+    altCloneIdRef.current = null
   }
 
   return { handleDragStart, handleDragMove, handleDragEnd }

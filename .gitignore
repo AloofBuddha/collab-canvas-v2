@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 .partykit
+.vars
 dist-ssr
 *.local
 

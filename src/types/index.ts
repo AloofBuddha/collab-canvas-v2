@@ -16,6 +16,9 @@ interface BaseShape {
   zIndex?: number
   color: string
   createdBy: string
+  label?: string
+  labelFontSize?: number
+  labelColor?: string
 }
 
 export interface RectangleShape extends BaseShape {
@@ -39,6 +42,8 @@ export interface LineShape extends BaseShape {
   x2: number
   y2: number
   strokeWidth: number
+  arrowStart?: boolean
+  arrowEnd?: boolean
 }
 
 export interface TextShape extends BaseShape {

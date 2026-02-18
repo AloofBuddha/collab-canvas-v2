@@ -37,6 +37,8 @@ interface UseKeyboardShortcutsOptions {
   bringForward: (id: string) => void
   sendBackward: (id: string) => void
   resetZoom?: () => void
+  onToggleShortcutsGuide?: () => void
+  onToggleAI?: () => void
 }
 
 export function useKeyboardShortcuts({
@@ -54,6 +56,8 @@ export function useKeyboardShortcuts({
   bringForward,
   sendBackward,
   resetZoom,
+  onToggleShortcutsGuide,
+  onToggleAI,
 }: UseKeyboardShortcutsOptions) {
   // Store mutable values in refs so the keydown listener always reads fresh state
   // without needing to re-register on every render.
@@ -70,6 +74,8 @@ export function useKeyboardShortcuts({
     bringToFront,
     sendToBack,
     resetZoom,
+    onToggleShortcutsGuide,
+    onToggleAI,
   })
 
   useEffect(() => {
@@ -86,6 +92,8 @@ export function useKeyboardShortcuts({
       bringToFront,
       sendToBack,
       resetZoom,
+      onToggleShortcutsGuide,
+        onToggleAI,
     }
   })
 
@@ -130,6 +138,13 @@ export function useKeyboardShortcuts({
       if (modKey && ((e.key.toLowerCase() === 'z' && e.shiftKey) || e.key.toLowerCase() === 'y')) {
         e.preventDefault()
         redo()
+        return
+      }
+
+      // Ctrl/Cmd+K — toggle AI command input
+      if (modKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        stateRef.current.onToggleAI?.()
         return
       }
 
@@ -207,6 +222,13 @@ export function useKeyboardShortcuts({
       if (e.key === '[' && selectedShapeId) {
         e.preventDefault()
         sendBackward(selectedShapeId)
+        return
+      }
+
+      // ? — toggle keyboard shortcuts guide
+      if (e.key === '?') {
+        e.preventDefault()
+        stateRef.current.onToggleShortcutsGuide?.()
         return
       }
 

@@ -8,7 +8,7 @@
  */
 
 import { Fragment } from 'react'
-import { Rect, Ellipse, Line, Text as KonvaText, Group, Circle } from 'react-konva'
+import { Rect, Ellipse, Line, Arrow, Text as KonvaText, Group, Circle } from 'react-konva'
 import Konva from 'konva'
 import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape } from '../types'
 import { getShapeWidth, getShapeHeight } from '../utils/shapeManipulation'
@@ -69,6 +69,34 @@ function ResizeHandles({ shape, stageScale }: { shape: Shape; stageScale: number
         />
       ))}
     </Fragment>
+  )
+}
+
+/**
+ * Renders a centered label on a shape (rect, circle, sticky).
+ * Font size auto-scales based on shape dimensions, capped at 24px.
+ */
+function ShapeLabel({ label, labelFontSize, labelColor, width, height }: {
+  label: string
+  labelFontSize?: number
+  labelColor?: string
+  width: number
+  height: number
+}) {
+  const fontSize = labelFontSize || Math.min(24, Math.max(10, Math.min(width, height) / 6))
+  return (
+    <KonvaText
+      text={label}
+      fontSize={fontSize}
+      fill={labelColor || '#374151'}
+      width={width}
+      height={height}
+      offsetX={width / 2}
+      offsetY={height / 2}
+      align="center"
+      verticalAlign="middle"
+      listening={false}
+    />
   )
 }
 
@@ -134,6 +162,15 @@ export default function ShapeRenderer({
               stroke={rect.stroke}
               strokeWidth={shapeStrokeWidth}
             />
+            {rect.label && (
+              <ShapeLabel
+                label={rect.label}
+                labelFontSize={rect.labelFontSize}
+                labelColor={rect.labelColor}
+                width={rect.width}
+                height={rect.height}
+              />
+            )}
             {showBorder && (
               <Rect
                 width={selectionWidth}
@@ -190,6 +227,15 @@ export default function ShapeRenderer({
               stroke={circle.stroke}
               strokeWidth={shapeStrokeWidth}
             />
+            {circle.label && (
+              <ShapeLabel
+                label={circle.label}
+                labelFontSize={circle.labelFontSize}
+                labelColor={circle.labelColor}
+                width={circle.radiusX * 2}
+                height={circle.radiusY * 2}
+              />
+            )}
             {showBorder && (
               <Ellipse
                 radiusX={selectionRadiusX}
@@ -213,6 +259,10 @@ export default function ShapeRenderer({
           line.x - centerX, line.y - centerY,
           line.x2 - centerX, line.y2 - centerY,
         ]
+        const hasArrow = line.arrowStart || line.arrowEnd
+        const pointerLength = 10 * (line.strokeWidth / 4)
+        const pointerWidth = 10 * (line.strokeWidth / 4)
+        const LineComponent = hasArrow ? Arrow : Line
 
         return (
           <Group
@@ -232,11 +282,18 @@ export default function ShapeRenderer({
                 listening={false}
               />
             )}
-            <Line
+            <LineComponent
               points={points}
               stroke={line.color}
               strokeWidth={line.strokeWidth}
               opacity={shapeOpacity}
+              {...(hasArrow ? {
+                pointerLength,
+                pointerWidth,
+                pointerAtBeginning: line.arrowStart || false,
+                pointerAtEnding: line.arrowEnd || false,
+                fill: line.color,
+              } : {})}
             />
             {isSelected && (
               <Fragment>
@@ -337,6 +394,15 @@ export default function ShapeRenderer({
               shadowBlur={8}
               shadowOffsetY={2}
             />
+            {sticky.label && (
+              <ShapeLabel
+                label={sticky.label}
+                labelFontSize={sticky.labelFontSize}
+                labelColor={sticky.labelColor}
+                width={sticky.width}
+                height={sticky.height}
+              />
+            )}
             {showBorder && (
               <Rect
                 width={sticky.width}

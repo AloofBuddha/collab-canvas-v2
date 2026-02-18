@@ -162,6 +162,7 @@ const shapeTypeRegistry: Record<string, ShapeTypeConfig> = {
       x2: x,
       y2: y,
       strokeWidth: 4,
+      arrowEnd: true,
       color: '#D1D5DB',
       opacity: 1.0,
       zIndex: Date.now(),

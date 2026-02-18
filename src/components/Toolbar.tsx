@@ -6,13 +6,15 @@
  * Added sticky note tool.
  */
 
-import { MousePointer2, Square, Circle, Pen, Type, StickyNote } from 'lucide-react'
+import { MousePointer2, Square, Circle, Pen, Type, StickyNote, Sparkles } from 'lucide-react'
 import type { Tool } from '../types'
 import styles from './Toolbar.module.css'
 
 interface ToolbarProps {
   selectedTool: Tool
   onSelectTool: (tool: Tool) => void
+  isAIActive?: boolean
+  onToggleAI?: () => void
 }
 
 const tools: { id: Tool; icon: typeof Square; label: string }[] = [
@@ -24,7 +26,7 @@ const tools: { id: Tool; icon: typeof Square; label: string }[] = [
   { id: 'sticky', icon: StickyNote, label: 'Sticky Note' },
 ]
 
-export default function Toolbar({ selectedTool, onSelectTool }: ToolbarProps) {
+export default function Toolbar({ selectedTool, onSelectTool, isAIActive, onToggleAI }: ToolbarProps) {
   const handleToolSelect = (tool: Tool) => {
     onSelectTool(tool)
     if (document.activeElement instanceof HTMLElement) {
@@ -50,6 +52,19 @@ export default function Toolbar({ selectedTool, onSelectTool }: ToolbarProps) {
             </button>
           )
         })}
+        {onToggleAI && (
+          <>
+            <div className={styles.divider} />
+            <button
+              onClick={onToggleAI}
+              className={`${styles.toolButton} ${isAIActive ? styles.active : ''}`}
+              title="AI Agent (Ctrl+K)"
+              aria-label="AI Agent"
+            >
+              <Sparkles size={20} />
+            </button>
+          </>
+        )}
       </div>
     </div>
   )
