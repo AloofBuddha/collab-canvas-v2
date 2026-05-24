@@ -369,11 +369,12 @@ If the user references something already on the canvas (you'll see the current s
 // Agent runner
 // ============================================================================
 
-// Opus 4.7 + extended thinking is the configuration that approaches the
+// Opus 4.7 + adaptive thinking is the configuration that approaches the
 // quality bar Claude Design hits — the model gets to deeply plan layouts
 // (decomposition, symmetry math, z-order) before placing any shape.
+// Opus 4.7 uses the newer thinking API: type=adaptive + output_config.effort.
 const MODEL = 'claude-opus-4-7'
-const THINKING_BUDGET = 10000
+const THINKING_EFFORT = 'high'
 const MAX_TOOL_ROUNDS = 6
 // Leave plenty of room: extended thinking + a single big composeArtifact call
 // with 30-60 shapes can easily fill 8k tokens.
@@ -488,8 +489,10 @@ export async function runAIAgent(
           model: MODEL,
           max_tokens: MAX_TOKENS,
           thinking: {
-            type: 'enabled',
-            budget_tokens: THINKING_BUDGET,
+            type: 'adaptive',
+          },
+          output_config: {
+            effort: THINKING_EFFORT,
           },
           // Cache the system prompt + tool schemas — they're identical across
           // every request so this slashes per-call token cost.
@@ -505,6 +508,17 @@ export async function runAIAgent(
 
       if (!httpResponse.ok) {
         const errBody = await httpResponse.text()
+        // Surface diagnostic context on the server so a 401 / 400 doesn't
+        // require another deploy cycle to debug. No secret leakage —
+        // we log only the fingerprint of the key we actually sent.
+        console.error('[ai] Anthropic call failed', {
+          status: httpResponse.status,
+          statusText: httpResponse.statusText,
+          keyFingerprint: `${apiKey.slice(0, 8)}…${apiKey.slice(-4)} (len=${apiKey.length})`,
+          anthropicVersion: ANTHROPIC_VERSION,
+          model: MODEL,
+          body: errBody.slice(0, 500),
+        })
         return {
           type: 'ai-response',
           operations,
