@@ -29,8 +29,10 @@ interface UseMultiSelectReturn {
   selectionBox: SelectionBox | null
   isSelecting: boolean
 
-  /** Single click on a shape (handles shift+click toggle) */
-  handleShapeClick: (shapeId: string, shiftKey: boolean) => void
+  /** Single click on a shape (handles shift+click toggle).
+   *  Pass `shapes` so we can expand the selection to include sibling group
+   *  members when the clicked shape belongs to a group. */
+  handleShapeClick: (shapeId: string, shiftKey: boolean, shapes?: Record<string, Shape>) => void
   /** Click on empty canvas — deselect all */
   handleStageClick: () => void
   /** Select all shapes */
@@ -60,19 +62,27 @@ export function useMultiSelect(): UseMultiSelectReturn {
     ? Array.from(selectedShapeIds)[0]
     : null
 
-  const handleShapeClick = useCallback((shapeId: string, shiftKey: boolean) => {
+  const handleShapeClick = useCallback((
+    shapeId: string,
+    shiftKey: boolean,
+    shapes?: Record<string, Shape>,
+  ) => {
+    const expanded = shapes ? expandToGroups([shapeId], shapes) : [shapeId]
     if (shiftKey) {
       setSelectedShapeIds(prev => {
         const next = new Set(prev)
-        if (next.has(shapeId)) {
-          next.delete(shapeId)
+        // If any of the expanded ids are selected, treat as toggle-off for the
+        // whole group; otherwise add the whole group.
+        const allIn = expanded.every(id => next.has(id))
+        if (allIn) {
+          for (const id of expanded) next.delete(id)
         } else {
-          next.add(shapeId)
+          for (const id of expanded) next.add(id)
         }
         return next
       })
     } else {
-      setSelectedShapeIds(new Set([shapeId]))
+      setSelectedShapeIds(new Set(expanded))
     }
   }, [])
 
@@ -123,18 +133,12 @@ export function useMultiSelect(): UseMultiSelectReturn {
       return
     }
 
-    const selected = new Set<string>()
+    const initial: string[] = []
     for (const [id, shape] of Object.entries(shapes)) {
-      if (doesShapeOverlap(shape, selectionBox)) {
-        selected.add(id)
-      }
+      if (doesShapeOverlap(shape, selectionBox)) initial.push(id)
     }
-
-    if (selected.size > 0) {
-      setSelectedShapeIds(selected)
-    } else {
-      setSelectedShapeIds(new Set())
-    }
+    const expanded = expandToGroups(initial, shapes)
+    setSelectedShapeIds(new Set(expanded))
 
     setIsSelecting(false)
     setSelectionBox(null)
@@ -163,6 +167,24 @@ export function useMultiSelect(): UseMultiSelectReturn {
     cancelSelection,
     setSelectedShapeIds,
   }
+}
+
+/**
+ * Given an initial set of selected shape ids, return that set plus every
+ * shape that belongs to the same group as one of them.
+ */
+function expandToGroups(ids: string[], shapes: Record<string, Shape>): string[] {
+  const groupIds = new Set<string>()
+  for (const id of ids) {
+    const g = shapes[id]?.groupId
+    if (g) groupIds.add(g)
+  }
+  if (groupIds.size === 0) return ids
+  const result = new Set(ids)
+  for (const [id, shape] of Object.entries(shapes)) {
+    if (shape.groupId && groupIds.has(shape.groupId)) result.add(id)
+  }
+  return Array.from(result)
 }
 
 /**

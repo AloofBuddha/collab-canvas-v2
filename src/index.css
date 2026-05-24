@@ -29,10 +29,20 @@
   --color-blue-600: #2563eb;
   --color-blue-700: #1d4ed8;
 
+  /* AI accent palette (Claude coral) */
+  --color-ai: #C96442;
+  --color-ai-soft: #FBE9DD;
+  --color-ai-softer: #FDF5EE;
+  --color-ai-ink: #7A3A22;
+
   /* Shared tokens */
   --shadow-panel: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --shadow-bar: 0 6px 18px rgba(0, 0, 0, 0.06);
+  --shadow-bar-active: 0 0 0 4px var(--color-ai-softer), 0 12px 24px rgba(0, 0, 0, 0.08);
   --border-color: #e5e7eb;
   --toolbar-button-size: 2.5rem;
+  --font-display: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
 body {

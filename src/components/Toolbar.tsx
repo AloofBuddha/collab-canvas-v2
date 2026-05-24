@@ -6,27 +6,26 @@
  * Added sticky note tool.
  */
 
-import { MousePointer2, Square, Circle, Pen, Type, StickyNote, Sparkles } from 'lucide-react'
+import { MousePointer2, Square, Circle, Hexagon, MoveUpRight, Spline, Pen } from 'lucide-react'
 import type { Tool } from '../types'
 import styles from './Toolbar.module.css'
 
 interface ToolbarProps {
   selectedTool: Tool
   onSelectTool: (tool: Tool) => void
-  isAIActive?: boolean
-  onToggleAI?: () => void
 }
 
 const tools: { id: Tool; icon: typeof Square; label: string }[] = [
   { id: 'select', icon: MousePointer2, label: 'Select' },
   { id: 'rectangle', icon: Square, label: 'Rectangle' },
   { id: 'circle', icon: Circle, label: 'Circle' },
-  { id: 'line', icon: Pen, label: 'Line' },
-  { id: 'text', icon: Type, label: 'Text' },
-  { id: 'sticky', icon: StickyNote, label: 'Sticky Note' },
+  { id: 'polygon', icon: Hexagon, label: 'Polygon (regular N-gon)' },
+  { id: 'line', icon: MoveUpRight, label: 'Line / arrow' },
+  { id: 'path', icon: Spline, label: 'Path (click to add vertices, double-click to finish)' },
+  { id: 'pen', icon: Pen, label: 'Pen (freehand)' },
 ]
 
-export default function Toolbar({ selectedTool, onSelectTool, isAIActive, onToggleAI }: ToolbarProps) {
+export default function Toolbar({ selectedTool, onSelectTool }: ToolbarProps) {
   const handleToolSelect = (tool: Tool) => {
     onSelectTool(tool)
     if (document.activeElement instanceof HTMLElement) {
@@ -52,19 +51,6 @@ export default function Toolbar({ selectedTool, onSelectTool, isAIActive, onTogg
             </button>
           )
         })}
-        {onToggleAI && (
-          <>
-            <div className={styles.divider} />
-            <button
-              onClick={onToggleAI}
-              className={`${styles.toolButton} ${isAIActive ? styles.active : ''}`}
-              title="AI Agent (Ctrl+K)"
-              aria-label="AI Agent"
-            >
-              <Sparkles size={20} />
-            </button>
-          </>
-        )}
       </div>
     </div>
   )

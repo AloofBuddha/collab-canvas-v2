@@ -285,6 +285,40 @@ export function useBoard(boardId: string, user?: User, initialTitle?: string) {
     }
   }, [])
 
+  /** Assign a fresh groupId to every shape in `ids` so they move/select together. */
+  const groupShapes = useCallback((ids: string[]) => {
+    const map = shapesMapRef.current
+    if (!map || ids.length < 2) return
+    const groupId = `group-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+    map.doc?.transact(() => {
+      for (const id of ids) {
+        const shape = map.get(id)
+        if (shape) map.set(id, { ...shape, groupId })
+      }
+    })
+  }, [])
+
+  /** Clear groupId on every shape that shares a group with any of `ids`. */
+  const ungroupShapes = useCallback((ids: string[]) => {
+    const map = shapesMapRef.current
+    if (!map) return
+    const groupIds = new Set<string>()
+    for (const id of ids) {
+      const g = map.get(id)?.groupId
+      if (g) groupIds.add(g)
+    }
+    if (groupIds.size === 0) return
+    map.doc?.transact(() => {
+      map.forEach((shape, id) => {
+        if (shape.groupId && groupIds.has(shape.groupId)) {
+          const next = { ...shape }
+          delete next.groupId
+          map.set(id, next)
+        }
+      })
+    })
+  }, [])
+
   const sendBackward = useCallback((id: string) => {
     const map = shapesMapRef.current
     if (!map) return
@@ -327,5 +361,7 @@ export function useBoard(boardId: string, user?: User, initialTitle?: string) {
     sendToBack,
     bringForward,
     sendBackward,
+    groupShapes,
+    ungroupShapes,
   }
 }

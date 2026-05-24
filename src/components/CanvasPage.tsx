@@ -13,22 +13,26 @@ import { useBoard } from '../hooks/useBoard'
 import { useCanvasPanning } from '../hooks/useCanvasPanning'
 import { useCanvasZoom } from '../hooks/useCanvasZoom'
 import { useShapeCreation } from '../hooks/useShapeCreation'
+import { usePenCreation } from '../hooks/usePenCreation'
+import { usePenStrokeCreation } from '../hooks/usePenStrokeCreation'
 import { useShapeDragging } from '../hooks/useShapeDragging'
 import { useShapeResize } from '../hooks/useShapeResize'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 import { useMultiSelect } from '../hooks/useMultiSelect'
 import ShapeRenderer, { NewShapeRenderer } from './ShapeRenderer'
 import { DragSelectRect, MultiSelectBounds } from './SelectionOverlay'
+import PenPreview from './PenPreview'
 import DimensionLabel from './DimensionLabel'
 import RemoteCursor from './RemoteCursor'
 import GridBackground from './GridBackground'
 import Toolbar from './Toolbar'
 import UndoRedoButtons from './UndoRedoButtons'
 import FloatingToolbar from './FloatingToolbar'
+import SidePanel from './SidePanel'
 import InlineTextEditor from './InlineTextEditor'
 import ZoomControls from './ZoomControls'
 import Header from './Header'
-import AICommandInput from './AICommandInput'
+import AIBar, { type AIBarHandle } from './AIBar'
 import KeyboardShortcutsGuide from './KeyboardShortcutsGuide'
 import { useAIChat } from '../hooks/useAIChat'
 import { getCursorStyle } from '../utils/canvasUtils'
@@ -54,7 +58,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 })
   const [editingShapeId, setEditingShapeId] = useState<string | null>(null)
   const [showShortcutsGuide, setShowShortcutsGuide] = useState(false)
-  const [showAIInput, setShowAIInput] = useState(false)
+  const aiBarRef = useRef<AIBarHandle>(null)
 
   // Look up known board metadata from localStorage
   const boardMeta = useMemo(() => {
@@ -80,10 +84,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
     sendToBack,
     bringForward,
     sendBackward,
+    groupShapes,
+    ungroupShapes,
   } = useBoard(boardId!, user, boardMeta?.title)
 
   // AI Chat
-  const { isLoading: aiLoading, sendMessage: aiSend } = useAIChat(
+  const { isLoading: aiLoading, sendMessage: aiSend, history: aiHistory, groupNames } = useAIChat(
     boardId!, user.userId, shapes, addShape, updateShape, removeShape,
   )
 
@@ -112,6 +118,35 @@ export function CanvasPage({ user }: CanvasPageProps) {
   const { isPanning, setIsPanning } = useCanvasPanning({ stageRef })
   const { handleWheel: baseHandleWheel } = useCanvasZoom({ onScaleChange: setStageScale })
 
+  // Resolve the name of the selected AI artifact (if any). Drives refine
+  // mode in the AI bar. Placed after multi-select so we can read its state.
+  const selectedArtifactName = useMemo(() => {
+    if (selectedShapeIds.size === 0) return null
+    const gids = new Set<string>()
+    for (const id of selectedShapeIds) {
+      const g = shapes[id]?.groupId
+      if (g) gids.add(g)
+      else return null // any ungrouped shape disqualifies refine mode
+    }
+    if (gids.size !== 1) return null
+    const gid = Array.from(gids)[0]
+    return groupNames[gid] ?? null
+  }, [selectedShapeIds, shapes, groupNames])
+
+  // True when every selected shape belongs to the same group — used to
+  // suppress per-shape selection borders so the group reads as one unit.
+  const isGroupedSelection = useMemo(() => {
+    if (selectedShapeIds.size < 2) return false
+    let groupId: string | undefined
+    for (const id of selectedShapeIds) {
+      const g = shapes[id]?.groupId
+      if (!g) return false
+      if (groupId === undefined) groupId = g
+      else if (groupId !== g) return false
+    }
+    return true
+  }, [selectedShapeIds, shapes])
+
   // Wrap wheel handler to also track stage position
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     baseHandleWheel(e)
@@ -129,20 +164,55 @@ export function CanvasPage({ user }: CanvasPageProps) {
     setStagePos({ x: 0, y: 0 })
   }, [])
 
-  // Shape creation (click-drag)
+  // Shape creation (click-drag) — used by every tool EXCEPT path.
   const { isDrawing, newShape, startCreating, updateSize, finishCreating } = useShapeCreation({
     userId: user.userId,
     onShapeCreated: addShape,
     onToolChange: setTool,
-    shapeType: tool === 'select' ? 'rectangle' : tool,
+    // path + pen are handled by their dedicated hooks; useShapeCreation
+    // only owns drag-based primitives, so substitute a safe fallback type.
+    shapeType: (tool === 'select' || tool === 'path' || tool === 'pen') ? 'rectangle' : tool,
   })
 
-  // Shape dragging (with Alt+Drag duplication)
+  // Pen creation — used by the path tool. Click adds a vertex; preview line
+  // follows cursor; double-click (or Enter / Escape) finishes / cancels.
+  const {
+    isPenning,
+    points: penPoints,
+    previewPoint: penPreviewPoint,
+    addPoint: addPenPoint,
+    updatePreview: updatePenPreview,
+    finishPen,
+    cancelPen,
+  } = usePenCreation({
+    userId: user.userId,
+    onShapeCreated: addShape,
+    onToolChange: setTool,
+  })
+
+  // Freehand strokes — used by the pen tool. Mousedown begins, mousemove
+  // samples, mouseup commits as a path shape.
+  const {
+    isStroking,
+    points: strokePoints,
+    startStroke,
+    addStrokeSample,
+    finishStroke,
+    cancelStroke,
+  } = usePenStrokeCreation({
+    userId: user.userId,
+    onShapeCreated: addShape,
+    onToolChange: setTool,
+  })
+
+  // Shape dragging (with Alt+Drag duplication and multi-shape group drag)
   const { handleDragStart, handleDragMove, handleDragEnd } = useShapeDragging({
     isPanning,
     updateShape,
     addShape,
     setSelectedShapeId: (id: string | null) => { if (id) selectShape(id) },
+    selectedShapeIds,
+    shapes,
   })
 
   // Shape resizing
@@ -195,6 +265,26 @@ export function CanvasPage({ user }: CanvasPageProps) {
     return () => window.removeEventListener('resize', handleResize)
   }, [])
 
+  // Pen-tool: Enter to commit, Escape to cancel. Registered here so it can
+  // see the pen hook's `isPenning` and bypass the general shortcuts hook.
+  useEffect(() => {
+    if (!isPenning && !isStroking) return
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
+      if (e.key === 'Enter' && isPenning) {
+        e.preventDefault()
+        finishPen()
+      } else if (e.key === 'Escape') {
+        e.preventDefault()
+        if (isPenning) cancelPen()
+        if (isStroking) cancelStroke()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [isPenning, isStroking, finishPen, cancelPen, cancelStroke])
+
   // Keyboard shortcuts
   useKeyboardShortcuts({
     shapes,
@@ -213,9 +303,11 @@ export function CanvasPage({ user }: CanvasPageProps) {
     sendToBack,
     bringForward,
     sendBackward,
+    groupShapes,
+    ungroupShapes,
     resetZoom,
     onToggleShortcutsGuide: () => setShowShortcutsGuide(prev => !prev),
-    onToggleAI: () => setShowAIInput(prev => !prev),
+    onToggleAI: () => aiBarRef.current?.focus(),
   })
 
   // Cursor style
@@ -235,25 +327,53 @@ export function CanvasPage({ user }: CanvasPageProps) {
     // Left-click only
     if (evt.button !== 0) return
 
+    if (tool === 'path') {
+      // Pen flow: each click adds a vertex. Double-click ends the path.
+      const stage = e.target.getStage()
+      if (!stage) return
+      const pos = getPointerPosition(stage)
+      if (pos) addPenPoint(pos.x, pos.y)
+      return
+    }
+
+    if (tool === 'pen') {
+      // Freehand stroke begins
+      const stage = e.target.getStage()
+      if (!stage) return
+      const pos = getPointerPosition(stage)
+      if (pos) startStroke(pos.x, pos.y)
+      return
+    }
+
     if (tool !== 'select') {
-      // Shape creation tool active → start drawing
+      // Shape creation tool active → start drawing (drag-based)
       startCreating(e)
     } else {
       // Select tool — clicked on empty canvas
       const clickedOnStage = e.target === e.target.getStage()
       if (clickedOnStage) {
-        // Start drag-to-select
         const stage = e.target.getStage()
-        if (stage) {
-          const pos = getPointerPosition(stage)
-          if (pos) {
-            handleStageClick() // deselect first
-            startSelection(pos.x, pos.y)
+        if (!stage) return
+
+        // Rotation zones live OUTSIDE the shape bounds, so a click there
+        // hits the Stage. If something is single-selected, try rotate/resize
+        // first; only fall through to drag-to-select if we missed.
+        if (selectedShapeId && selectedShapeIds.size === 1) {
+          if (tryStartResize(stage, selectedShapeId)) {
+            e.cancelBubble = true
+            return
           }
+        }
+
+        // Otherwise start drag-to-select
+        const pos = getPointerPosition(stage)
+        if (pos) {
+          handleStageClick() // deselect first
+          startSelection(pos.x, pos.y)
         }
       }
     }
-  }, [tool, startCreating, setIsPanning, handleStageClick, startSelection])
+  }, [tool, startCreating, setIsPanning, handleStageClick, startSelection, selectedShapeId, selectedShapeIds.size, tryStartResize, addPenPoint, startStroke])
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
     // Update cursor position for remote presence
@@ -292,11 +412,33 @@ export function CanvasPage({ user }: CanvasPageProps) {
     if (isDrawing) {
       updateSize(e)
     }
-  }, [updateCursor, isDrawing, updateSize, isResizing, handleResizeMove, isSelecting, updateSelection, selectedShapeId, tool, isPanning, getHandleCursor, cursorStyle])
+
+    // Update pen-tool preview (rubber-band from last vertex to cursor)
+    if (isPenning) {
+      const stage = e.target.getStage()
+      if (stage) {
+        const pos = getPointerPosition(stage)
+        if (pos) updatePenPreview(pos.x, pos.y)
+      }
+    }
+
+    // Freehand stroke sampling
+    if (isStroking) {
+      const stage = e.target.getStage()
+      if (stage) {
+        const pos = getPointerPosition(stage)
+        if (pos) addStrokeSample(pos.x, pos.y)
+      }
+    }
+  }, [updateCursor, isDrawing, updateSize, isResizing, handleResizeMove, isSelecting, updateSelection, selectedShapeId, tool, isPanning, isPenning, isStroking, getHandleCursor, cursorStyle, updatePenPreview, addStrokeSample])
 
   const handleMouseUp = useCallback(() => {
     if (isResizing()) {
       handleResizeEnd()
+      return
+    }
+    if (isStroking) {
+      finishStroke()
       return
     }
     if (isSelecting) {
@@ -306,7 +448,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
     if (isDrawing) {
       finishCreating()
     }
-  }, [isDrawing, finishCreating, isResizing, handleResizeEnd, isSelecting, finishSelection, shapes])
+  }, [isDrawing, finishCreating, isResizing, handleResizeEnd, isSelecting, finishSelection, shapes, isStroking, finishStroke])
 
   // Shape-level event handlers
   const handleShapeMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => {
@@ -315,8 +457,9 @@ export function CanvasPage({ user }: CanvasPageProps) {
       cancelSelection()
     }
 
-    // Shift+click = toggle multi-select; normal click = single select
-    handleShapeClick(shapeId, e.evt.shiftKey)
+    // Shift+click = toggle multi-select; normal click = single select.
+    // Pass shapes so the hook can expand the selection to sibling group members.
+    handleShapeClick(shapeId, e.evt.shiftKey, shapes)
 
     // If shape is already selected (single select), check if clicking on a resize handle
     const stage = e.target.getStage()
@@ -327,7 +470,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
         e.cancelBubble = true
       }
     }
-  }, [selectedShapeId, selectedShapeIds.size, tryStartResize, handleShapeClick, isSelecting, cancelSelection])
+  }, [shapes, selectedShapeId, selectedShapeIds.size, tryStartResize, handleShapeClick, isSelecting, cancelSelection])
 
   const handleShapeDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>, shape: Shape) => {
     handleDragStart(e, shape)
@@ -350,40 +493,58 @@ export function CanvasPage({ user }: CanvasPageProps) {
   }, [handleDragEnd])
 
   // --- Group drag for multi-select ---
-  const groupDragStartPos = useRef<{ x: number; y: number } | null>(null)
+  // Snapshot every selected shape's original position at drag start so the
+  // per-frame handler can compute `original + totalDelta`. The previous
+  // implementation read `shapes` from the closure, which is stale until the
+  // Yjs update round-trips back through React — causing the bbox to visually
+  // outrun the shapes during fast drags.
+  interface GroupDragOrigin {
+    nodeX: number
+    nodeY: number
+    shapes: Array<{ id: string; x: number; y: number; x2?: number; y2?: number }>
+  }
+  const groupDragOriginRef = useRef<GroupDragOrigin | null>(null)
 
   const handleGroupDragStart = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target
-    groupDragStartPos.current = { x: node.x(), y: node.y() }
-  }, [])
+    groupDragOriginRef.current = {
+      nodeX: node.x(),
+      nodeY: node.y(),
+      shapes: Array.from(selectedShapeIds)
+        .map(id => shapes[id])
+        .filter((s): s is Shape => !!s)
+        .map(s => ({
+          id: s.id,
+          x: s.x,
+          y: s.y,
+          x2: s.type === 'line' ? s.x2 : undefined,
+          y2: s.type === 'line' ? s.y2 : undefined,
+        })),
+    }
+  }, [selectedShapeIds, shapes])
 
   const handleGroupDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
-    if (!groupDragStartPos.current) return
+    const origin = groupDragOriginRef.current
+    if (!origin) return
     const node = e.target
-    const deltaX = node.x() - groupDragStartPos.current.x
-    const deltaY = node.y() - groupDragStartPos.current.y
+    const totalDeltaX = node.x() - origin.nodeX
+    const totalDeltaY = node.y() - origin.nodeY
 
-    // Move all selected shapes by the delta
-    for (const id of selectedShapeIds) {
-      const shape = shapes[id]
-      if (!shape) continue
+    for (const orig of origin.shapes) {
       const updates: Partial<Shape> = {
-        x: shape.x + deltaX,
-        y: shape.y + deltaY,
+        x: orig.x + totalDeltaX,
+        y: orig.y + totalDeltaY,
       }
-      if (shape.type === 'line') {
-        (updates as Record<string, number>).x2 = shape.x2 + deltaX;
-        (updates as Record<string, number>).y2 = shape.y2 + deltaY
+      if (orig.x2 !== undefined && orig.y2 !== undefined) {
+        (updates as Record<string, number>).x2 = orig.x2 + totalDeltaX;
+        (updates as Record<string, number>).y2 = orig.y2 + totalDeltaY
       }
-      updateShape(id, updates)
+      updateShape(orig.id, updates)
     }
-
-    // Reset the reference point for the next delta
-    groupDragStartPos.current = { x: node.x(), y: node.y() }
-  }, [selectedShapeIds, shapes, updateShape])
+  }, [updateShape])
 
   const handleGroupDragEnd = useCallback(() => {
-    groupDragStartPos.current = null
+    groupDragOriginRef.current = null
   }, [])
 
   // Double-click to edit text/sticky inline
@@ -439,6 +600,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
+        onDblClick={() => { if (isPenning) finishPen() }}
         style={{ position: 'fixed', top: 0, left: 0 }}
       >
         {/* Grid background */}
@@ -457,6 +619,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
               key={shape.id}
               shape={shape}
               isSelected={selectedShapeIds.has(shape.id)}
+              showHandles={selectedShapeIds.size === 1}
+              /* For grouped selections, suppress per-shape selection borders —
+                 the outer MultiSelectBounds rectangle stands in. Multi-select
+                 of ungrouped shapes keeps per-shape borders so the user can
+                 see which individual shapes are in the set. */
+              showBorder={!isGroupedSelection || selectedShapeIds.size === 1}
               isEditing={shape.id === editingShapeId}
               stageScale={stageScale}
               onMouseDown={handleShapeMouseDown}
@@ -492,6 +660,26 @@ export function CanvasPage({ user }: CanvasPageProps) {
           {/* Creation preview */}
           {isDrawing && newShape && <NewShapeRenderer shape={newShape} />}
 
+          {/* Pen (vertex-based) preview */}
+          {isPenning && (
+            <PenPreview
+              points={penPoints}
+              previewPoint={penPreviewPoint}
+              stageScale={stageScale}
+            />
+          )}
+
+          {/* Freehand stroke preview — no per-vertex dots; the samples
+              aren't meaningful as individual decisions. */}
+          {isStroking && (
+            <PenPreview
+              points={strokePoints}
+              previewPoint={null}
+              stageScale={stageScale}
+              showDots={false}
+            />
+          )}
+
           {/* Remote cursors */}
           {remoteCursors.map((cursor) => (
             <RemoteCursor
@@ -505,23 +693,31 @@ export function CanvasPage({ user }: CanvasPageProps) {
       <Toolbar
         selectedTool={tool}
         onSelectTool={setTool}
-        isAIActive={showAIInput}
-        onToggleAI={() => setShowAIInput(prev => !prev)}
       />
       <UndoRedoButtons onUndo={undo} onRedo={redo} canUndo={canUndo} canRedo={canRedo} />
       <ZoomControls scale={stageScale} onResetZoom={resetZoom} />
-      {selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
+      {selectedShapes.length > 0 && !editingShapeId && (
         <FloatingToolbar
-          shape={shapes[selectedShapeId]}
+          selectedShapes={selectedShapes}
           stageScale={stageScale}
           stagePos={stagePos}
-          updateShape={updateShape}
+          addShape={addShape}
           removeShape={removeShape}
           bringToFront={bringToFront}
           sendToBack={sendToBack}
           bringForward={bringForward}
           sendBackward={sendBackward}
+          groupShapes={groupShapes}
+          ungroupShapes={ungroupShapes}
+          setSelectedShapeIds={setSelectedShapeIds}
           onDeselect={deselectAll}
+        />
+      )}
+      {selectedShapeIds.size === 1 && selectedShapeId && shapes[selectedShapeId] && !editingShapeId && (
+        <SidePanel
+          shape={shapes[selectedShapeId]}
+          onUpdate={updateShape}
+          onClose={deselectAll}
         />
       )}
       {editingShapeId && shapes[editingShapeId] && (
@@ -536,12 +732,13 @@ export function CanvasPage({ user }: CanvasPageProps) {
       {showShortcutsGuide && (
         <KeyboardShortcutsGuide onClose={() => setShowShortcutsGuide(false)} />
       )}
-      {showAIInput && (
-        <AICommandInput
-          isExecuting={aiLoading}
-          onExecute={aiSend}
-        />
-      )}
+      <AIBar
+        ref={aiBarRef}
+        isLoading={aiLoading}
+        history={aiHistory}
+        selectedArtifactName={selectedArtifactName}
+        onSubmit={(prompt, opts) => aiSend(prompt, opts)}
+      />
     </>
   )
 }

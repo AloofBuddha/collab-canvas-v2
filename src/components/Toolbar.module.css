@@ -1,17 +1,18 @@
 .container {
   position: fixed;
-  bottom: 2rem;
-  left: 50%;
-  transform: translateX(-50%);
+  top: 50%;
+  left: 16px;
+  transform: translateY(-50%);
   z-index: 10;
 }
 
 .toolbar {
   display: flex;
+  flex-direction: column;
   gap: 0.25rem;
   padding: 0.5rem;
   background: white;
-  border-radius: 0.5rem;
+  border-radius: 0.625rem;
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
   border: 1px solid #e5e7eb;
 }
@@ -42,11 +43,10 @@
 }
 
 .divider {
-  width: 1px;
-  height: 1.5rem;
+  height: 1px;
+  width: 1.5rem;
   background: #e5e7eb;
-  margin: 0.5rem 0.25rem;
-  align-self: center;
+  margin: 0.25rem auto;
 }
 
 .toolButton.active {

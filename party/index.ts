@@ -23,13 +23,13 @@ export default class YjsServer implements Party.Server {
 
     if (parsed.type !== 'ai-request') return
 
-    const apiKey = this.room.env.XAI_API_KEY as string | undefined
+    const apiKey = this.room.env.ANTHROPIC_API_KEY as string | undefined
     if (!apiKey) {
       const errorResponse: AIResponse = {
         type: 'ai-response',
         operations: [],
         message: '',
-        error: 'AI API key not configured on server.',
+        error: 'ANTHROPIC_API_KEY not configured on server.',
       }
       sender.send(JSON.stringify(errorResponse))
       return

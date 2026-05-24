@@ -8,9 +8,9 @@
  */
 
 import { Fragment } from 'react'
-import { Rect, Ellipse, Line, Arrow, Text as KonvaText, Group, Circle } from 'react-konva'
+import { Rect, Ellipse, Line, Arrow, Text as KonvaText, Group, Circle, Path } from 'react-konva'
 import Konva from 'konva'
-import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape } from '../types'
+import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape, PolygonShape, PathShape } from '../types'
 import { getShapeWidth, getShapeHeight } from '../utils/shapeManipulation'
 import {
   SELECTION_COLOR,
@@ -73,28 +73,32 @@ function ResizeHandles({ shape, stageScale }: { shape: Shape; stageScale: number
 }
 
 /**
- * Renders a centered label on a shape (rect, circle, sticky).
- * Font size auto-scales based on shape dimensions, capped at 24px.
+ * Renders the text overlay on a shape. Reads the unified text/font/align
+ * fields from BaseShape; falls back to the deprecated label/labelFontSize/
+ * labelColor fields so older data still draws.
  */
-function ShapeLabel({ label, labelFontSize, labelColor, width, height }: {
-  label: string
-  labelFontSize?: number
-  labelColor?: string
-  width: number
-  height: number
-}) {
-  const fontSize = labelFontSize || Math.min(24, Math.max(10, Math.min(width, height) / 6))
+function ShapeText({ shape, width, height }: { shape: Shape; width: number; height: number }) {
+  const content = shape.text ?? shape.label
+  if (!content) return null
+  const fontSize = shape.fontSize ?? shape.labelFontSize
+    ?? Math.min(24, Math.max(10, Math.min(width, height) / 6))
+  const fill = shape.textColor ?? shape.labelColor ?? '#374151'
+  const fontFamily = shape.fontFamily ?? 'Inter, system-ui, sans-serif'
+  const align = shape.align ?? 'center'
+  const verticalAlign = shape.verticalAlign ?? 'middle'
   return (
     <KonvaText
-      text={label}
+      text={content}
       fontSize={fontSize}
-      fill={labelColor || '#374151'}
+      fontFamily={fontFamily}
+      fill={fill}
       width={width}
       height={height}
       offsetX={width / 2}
       offsetY={height / 2}
-      align="center"
-      verticalAlign="middle"
+      align={align}
+      verticalAlign={verticalAlign}
+      padding={4}
       listening={false}
     />
   )
@@ -103,6 +107,14 @@ function ShapeLabel({ label, labelFontSize, labelColor, width, height }: {
 interface ShapeRendererProps {
   shape: Shape
   isSelected: boolean
+  /** Show resize/rotate handles. Only true for single selection — multi-select
+   *  uses the outer MultiSelectBounds box and hides per-shape handles to avoid
+   *  visual clutter. */
+  showHandles?: boolean
+  /** Show the dashed selection border on this individual shape. Suppressed
+   *  for grouped selections so the outer MultiSelectBounds reads as a single
+   *  group outline instead of N overlapping per-shape borders. */
+  showBorder?: boolean
   isEditing?: boolean
   stageScale: number
   onMouseDown: (e: Konva.KonvaEventObject<MouseEvent>, shapeId: string) => void
@@ -115,6 +127,8 @@ interface ShapeRendererProps {
 export default function ShapeRenderer({
   shape,
   isSelected,
+  showHandles = true,
+  showBorder: showBorderProp,
   isEditing,
   stageScale,
   onMouseDown,
@@ -123,7 +137,7 @@ export default function ShapeRenderer({
   onDragEnd,
   onDoubleClick,
 }: ShapeRendererProps) {
-  const showBorder = isSelected
+  const showBorder = isSelected && (showBorderProp ?? true)
   const borderColor = SELECTION_COLOR
   const inverseBorderWidth = Math.max(2, 4 * Math.pow(stageScale, -0.6))
   const shapeOpacity = shape.opacity ?? 1.0
@@ -161,16 +175,9 @@ export default function ShapeRenderer({
               opacity={shapeOpacity}
               stroke={rect.stroke}
               strokeWidth={shapeStrokeWidth}
+              cornerRadius={rect.cornerRadius ?? 0}
             />
-            {rect.label && (
-              <ShapeLabel
-                label={rect.label}
-                labelFontSize={rect.labelFontSize}
-                labelColor={rect.labelColor}
-                width={rect.width}
-                height={rect.height}
-              />
-            )}
+            <ShapeText shape={rect} width={rect.width} height={rect.height} />
             {showBorder && (
               <Rect
                 width={selectionWidth}
@@ -183,7 +190,7 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
-            {isSelected && <ResizeHandles shape={rect} stageScale={stageScale} />}
+            {(isSelected && showHandles) && <ResizeHandles shape={rect} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -227,15 +234,7 @@ export default function ShapeRenderer({
               stroke={circle.stroke}
               strokeWidth={shapeStrokeWidth}
             />
-            {circle.label && (
-              <ShapeLabel
-                label={circle.label}
-                labelFontSize={circle.labelFontSize}
-                labelColor={circle.labelColor}
-                width={circle.radiusX * 2}
-                height={circle.radiusY * 2}
-              />
-            )}
+            <ShapeText shape={circle} width={circle.radiusX * 2} height={circle.radiusY * 2} />
             {showBorder && (
               <Ellipse
                 radiusX={selectionRadiusX}
@@ -246,7 +245,7 @@ export default function ShapeRenderer({
                 fill="transparent"
               />
             )}
-            {isSelected && <ResizeHandles shape={circle} stageScale={stageScale} />}
+            {(isSelected && showHandles) && <ResizeHandles shape={circle} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -295,7 +294,7 @@ export default function ShapeRenderer({
                 fill: line.color,
               } : {})}
             />
-            {isSelected && (
+            {(isSelected && showHandles) && (
               <Fragment>
                 <Circle
                   x={points[0]}
@@ -365,7 +364,7 @@ export default function ShapeRenderer({
                 verticalAlign={text.verticalAlign || 'top'}
               />
             )}
-            {isSelected && !isEditing && <ResizeHandles shape={text} stageScale={stageScale} />}
+            {(isSelected && showHandles && !isEditing) && <ResizeHandles shape={text} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -394,15 +393,7 @@ export default function ShapeRenderer({
               shadowBlur={8}
               shadowOffsetY={2}
             />
-            {sticky.label && (
-              <ShapeLabel
-                label={sticky.label}
-                labelFontSize={sticky.labelFontSize}
-                labelColor={sticky.labelColor}
-                width={sticky.width}
-                height={sticky.height}
-              />
-            )}
+            <ShapeText shape={sticky} width={sticky.width} height={sticky.height} />
             {showBorder && (
               <Rect
                 width={sticky.width}
@@ -429,7 +420,94 @@ export default function ShapeRenderer({
                 verticalAlign="top"
               />
             )}
-            {isSelected && !isEditing && <ResizeHandles shape={sticky} stageScale={stageScale} />}
+            {(isSelected && showHandles && !isEditing) && <ResizeHandles shape={sticky} stageScale={stageScale} />}
+          </Group>
+        )
+      }
+
+      case 'polygon': {
+        const poly = shape as PolygonShape
+        const polyStrokeWidth = poly.strokeWidth || 0
+        const selectionPadding = polyStrokeWidth / 2 + inverseBorderWidth / 2
+        return (
+          <Group
+            x={poly.x + poly.width / 2}
+            y={poly.y + poly.height / 2}
+            rotation={shape.rotation || 0}
+            draggable
+            {...groupEvents}
+          >
+            <Line
+              points={poly.points}
+              closed
+              fill={poly.color}
+              opacity={shapeOpacity}
+              stroke={poly.stroke}
+              strokeWidth={polyStrokeWidth}
+              lineJoin="round"
+              offsetX={poly.width / 2}
+              offsetY={poly.height / 2}
+            />
+            <ShapeText shape={poly} width={poly.width} height={poly.height} />
+            {showBorder && (
+              <Rect
+                width={poly.width + selectionPadding * 2}
+                height={poly.height + selectionPadding * 2}
+                offsetX={poly.width / 2 + selectionPadding}
+                offsetY={poly.height / 2 + selectionPadding}
+                stroke={borderColor}
+                strokeWidth={inverseBorderWidth}
+                dash={[8 / stageScale, 4 / stageScale]}
+                fill="transparent"
+              />
+            )}
+            {(isSelected && showHandles) && <ResizeHandles shape={poly} stageScale={stageScale} />}
+          </Group>
+        )
+      }
+
+      case 'path': {
+        const path = shape as PathShape
+        const pathStrokeWidth = path.strokeWidth || 0
+        const selectionPadding = pathStrokeWidth / 2 + inverseBorderWidth / 2
+        const vbW = path.viewBoxWidth ?? path.width ?? 1
+        const vbH = path.viewBoxHeight ?? path.height ?? 1
+        const sx = vbW > 0 ? path.width / vbW : 1
+        const sy = vbH > 0 ? path.height / vbH : 1
+        return (
+          <Group
+            x={path.x + path.width / 2}
+            y={path.y + path.height / 2}
+            rotation={shape.rotation || 0}
+            draggable
+            {...groupEvents}
+          >
+            <Path
+              data={path.d}
+              fill={path.color}
+              opacity={shapeOpacity}
+              stroke={path.stroke}
+              strokeWidth={pathStrokeWidth}
+              lineJoin="round"
+              lineCap="round"
+              scaleX={sx}
+              scaleY={sy}
+              offsetX={vbW / 2}
+              offsetY={vbH / 2}
+            />
+            {showBorder && (
+              <Rect
+                width={path.width + selectionPadding * 2}
+                height={path.height + selectionPadding * 2}
+                offsetX={path.width / 2 + selectionPadding}
+                offsetY={path.height / 2 + selectionPadding}
+                stroke={borderColor}
+                strokeWidth={inverseBorderWidth}
+                dash={[8 / stageScale, 4 / stageScale]}
+                fill="transparent"
+              />
+            )}
+            {(isSelected && showHandles) && <ResizeHandles shape={path} stageScale={stageScale} />}
           </Group>
         )
       }
@@ -497,6 +575,49 @@ export function NewShapeRenderer({ shape }: { shape: Shape }) {
             opacity={newShapeOpacity}
           />
         </Group>
+      )
+    }
+    case 'polygon': {
+      const poly = shape as PolygonShape
+      const ox = Math.min(poly.x, poly.x + poly.width)
+      const oy = Math.min(poly.y, poly.y + poly.height)
+      return (
+        <Line
+          x={ox}
+          y={oy}
+          points={poly.points}
+          closed
+          fill={NEW_SHAPE_COLOR}
+          opacity={newShapeOpacity}
+          stroke={NEW_SHAPE_COLOR}
+          strokeWidth={1}
+          listening={false}
+        />
+      )
+    }
+    case 'path': {
+      const path = shape as PathShape
+      const ox = Math.min(path.x, path.x + path.width)
+      const oy = Math.min(path.y, path.y + path.height)
+      const vbW = path.viewBoxWidth ?? 100
+      const vbH = path.viewBoxHeight ?? 100
+      const w = Math.abs(path.width)
+      const h = Math.abs(path.height)
+      const sx = vbW > 0 ? w / vbW : 1
+      const sy = vbH > 0 ? h / vbH : 1
+      return (
+        <Path
+          x={ox}
+          y={oy}
+          data={path.d}
+          fill={NEW_SHAPE_COLOR}
+          opacity={newShapeOpacity}
+          stroke={NEW_SHAPE_COLOR}
+          strokeWidth={1}
+          scaleX={sx}
+          scaleY={sy}
+          listening={false}
+        />
       )
     }
     default:

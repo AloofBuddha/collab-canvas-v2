@@ -18,6 +18,7 @@ import type { ManipulationZone } from '../utils/shapeManipulation'
 import {
   detectManipulationZone,
   calculateResize,
+  calculateRotation,
   getPointerPosition,
 } from '../utils/shapeManipulation'
 import Konva from 'konva'
@@ -34,6 +35,7 @@ interface ResizeState {
   originalShape: Shape
   startMouseX: number
   startMouseY: number
+  initialRotation: number
 }
 
 export function useShapeResize({ shapes, updateShape, stageScale }: UseShapeResizeProps) {
@@ -55,9 +57,8 @@ export function useShapeResize({ shapes, updateShape, stageScale }: UseShapeResi
 
     const hit = detectManipulationZone(shape, pos.x, pos.y, stageScale)
 
-    // Only intercept corner, edge, and line endpoint zones
+    // Intercept rotation zones, corner/edge resize zones, and line endpoints
     if (hit.zone === 'center') return false
-    if (hit.zone.includes('rotate')) return false // Skip rotation for now
 
     resizeStateRef.current = {
       shapeId,
@@ -65,6 +66,7 @@ export function useShapeResize({ shapes, updateShape, stageScale }: UseShapeResi
       originalShape: { ...shape },
       startMouseX: pos.x,
       startMouseY: pos.y,
+      initialRotation: shape.type !== 'line' ? (shape.rotation ?? 0) : 0,
     }
 
     return true
@@ -79,6 +81,19 @@ export function useShapeResize({ shapes, updateShape, stageScale }: UseShapeResi
 
     const currentShape = shapes[state.shapeId]
     if (!currentShape) return
+
+    if (state.zone.includes('rotate') && state.originalShape.type !== 'line') {
+      const rotation = calculateRotation(
+        state.originalShape,
+        pos.x,
+        pos.y,
+        state.startMouseX,
+        state.startMouseY,
+        state.initialRotation,
+      )
+      updateShape(state.shapeId, { rotation })
+      return
+    }
 
     const updates = calculateResize(
       currentShape,
@@ -119,7 +134,6 @@ export function useShapeResize({ shapes, updateShape, stageScale }: UseShapeResi
 
     const hit = detectManipulationZone(shape, pos.x, pos.y, stageScale)
     if (hit.zone === 'center') return null
-    if (hit.zone.includes('rotate')) return null
 
     return hit.cursor
   }, [shapes, stageScale])

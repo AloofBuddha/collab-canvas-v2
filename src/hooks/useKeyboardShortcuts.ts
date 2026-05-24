@@ -39,6 +39,8 @@ interface UseKeyboardShortcutsOptions {
   sendToBack: (id: string) => void
   bringForward: (id: string) => void
   sendBackward: (id: string) => void
+  groupShapes: (ids: string[]) => void
+  ungroupShapes: (ids: string[]) => void
   resetZoom?: () => void
   onToggleShortcutsGuide?: () => void
   onToggleAI?: () => void
@@ -48,6 +50,9 @@ export function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) {
   // Store mutable values in refs so the keydown listener always reads fresh state
   // without needing to re-register on every render.
   const stateRef = useRef(opts)
+  // Clipboard for Ctrl+C / Ctrl+V — survives across renders for the lifetime
+  // of this component (cleared when the user leaves the board).
+  const clipboardRef = useRef<Shape[]>([])
 
   useEffect(() => {
     stateRef.current = opts
@@ -125,6 +130,37 @@ export function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) {
         return
       }
 
+      // Ctrl+C — copy selected shape(s) into local clipboard
+      if (modKey && e.key.toLowerCase() === 'c') {
+        if (!hasSelection) return
+        e.preventDefault()
+        clipboardRef.current = Array.from(selectedShapeIds)
+          .map(id => shapes[id])
+          .filter((s): s is Shape => !!s)
+          .map(s => ({ ...s }))
+        return
+      }
+
+      // Ctrl+V — paste clipboard contents offset by 20px, select the new copies
+      if (modKey && e.key.toLowerCase() === 'v') {
+        if (clipboardRef.current.length === 0) return
+        e.preventDefault()
+        const newIds = new Set<string>()
+        for (const shape of clipboardRef.current) {
+          const newShape: Shape = {
+            ...shape,
+            id: `shape-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            x: shape.x + 20,
+            y: shape.y + 20,
+            ...(shape.type === 'line' ? { x2: shape.x2 + 20, y2: shape.y2 + 20 } : {}),
+          } as Shape
+          s.addShape(newShape)
+          newIds.add(newShape.id)
+        }
+        s.setSelectedShapeIds(newIds)
+        return
+      }
+
       // Ctrl+D — duplicate selected shape(s) offset by 10px
       if (modKey && e.key.toLowerCase() === 'd') {
         e.preventDefault()
@@ -145,6 +181,16 @@ export function useKeyboardShortcuts(opts: UseKeyboardShortcutsOptions) {
           newIds.add(newShape.id)
         }
         s.setSelectedShapeIds(newIds)
+        return
+      }
+
+      // Ctrl+G — group selected shapes; Ctrl+Shift+G — ungroup
+      if (modKey && e.key.toLowerCase() === 'g') {
+        if (!hasSelection) return
+        e.preventDefault()
+        const ids = Array.from(selectedShapeIds)
+        if (e.shiftKey) s.ungroupShapes(ids)
+        else s.groupShapes(ids)
         return
       }
 

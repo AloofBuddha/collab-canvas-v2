@@ -8,6 +8,7 @@ import {
   detectManipulationZone,
   calculateResize,
   calculateRotation,
+  ROTATE_CURSOR,
 } from '../../src/utils/shapeManipulation'
 import type { Shape, RectangleShape } from '../../src/types'
 
@@ -94,31 +95,31 @@ describe('detectManipulationZone', () => {
     it('should detect nw-rotate when mouse is outside top-left corner', () => {
       const result = detectManipulationZone(baseShape, 85, 85)
       expect(result.zone).toBe('nw-rotate')
-      expect(result.cursor).toBe('grab')
+      expect(result.cursor).toBe(ROTATE_CURSOR)
     })
 
     it('should detect ne-rotate when mouse is outside top-right corner', () => {
       const result = detectManipulationZone(baseShape, 315, 85)
       expect(result.zone).toBe('ne-rotate')
-      expect(result.cursor).toBe('grab')
+      expect(result.cursor).toBe(ROTATE_CURSOR)
     })
 
     it('should detect sw-rotate when mouse is outside bottom-left corner', () => {
       const result = detectManipulationZone(baseShape, 85, 215)
       expect(result.zone).toBe('sw-rotate')
-      expect(result.cursor).toBe('grab')
+      expect(result.cursor).toBe(ROTATE_CURSOR)
     })
 
     it('should detect se-rotate when mouse is outside bottom-right corner', () => {
       const result = detectManipulationZone(baseShape, 315, 215)
       expect(result.zone).toBe('se-rotate')
-      expect(result.cursor).toBe('grab')
+      expect(result.cursor).toBe(ROTATE_CURSOR)
     })
 
     it('should detect rotation zones closer to corners', () => {
       const result = detectManipulationZone(baseShape, 99, 99)
       expect(result.zone).toBe('nw-rotate')
-      expect(result.cursor).toBe('grab')
+      expect(result.cursor).toBe(ROTATE_CURSOR)
     })
   })
 
@@ -144,7 +145,7 @@ describe('detectManipulationZone', () => {
       expect(['center', 'nw-corner', 'ne-corner', 'sw-corner', 'se-corner',
               'n-edge', 's-edge', 'e-edge', 'w-edge',
               'nw-rotate', 'ne-rotate', 'sw-rotate', 'se-rotate']).toContain(result.zone)
-      expect(['move', 'nwse-resize', 'nesw-resize', 'ns-resize', 'ew-resize', 'grab', 'default']).toContain(result.cursor)
+      expect(['move', 'nwse-resize', 'nesw-resize', 'ns-resize', 'ew-resize', ROTATE_CURSOR, 'default']).toContain(result.cursor)
     })
   })
 })
