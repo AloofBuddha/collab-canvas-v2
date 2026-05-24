@@ -5,7 +5,7 @@
  * Added sticky note support.
  */
 
-import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape } from '../types'
+import type { Shape, RectangleShape, CircleShape, LineShape, TextShape, StickyNoteShape, PolygonShape, PathShape } from '../types'
 
 // ============================================================================
 // Shape Name Generation
@@ -17,6 +17,8 @@ const shapeCounters: Record<string, number> = {
   line: 0,
   text: 0,
   sticky: 0,
+  polygon: 0,
+  path: 0,
 }
 
 export function generateShapeName(type: string): string {
@@ -337,6 +339,147 @@ const shapeTypeRegistry: Record<string, ShapeTypeConfig> = {
       } as StickyNoteShape
     },
   },
+
+  polygon: {
+    displayName: 'Polygon',
+    getDefaultProps: (x, y, userId) => ({
+      type: 'polygon',
+      name: generateShapeName('polygon'),
+      x,
+      y,
+      // User-drawn polygons are regular N-gons. Default to hexagon; the user
+      // can change `sides` in the SidePanel after creation.
+      sides: 6,
+      points: regularPolygonPoints(0, 0, 6),
+      width: 0,
+      height: 0,
+      color: '#D1D5DB',
+      opacity: 1.0,
+      zIndex: Date.now(),
+      createdBy: userId,
+    }),
+    updateCreationProps: (shape, mouseX, mouseY) => {
+      const poly = shape as PolygonShape
+      const width = mouseX - shape.x
+      const height = mouseY - shape.y
+      return {
+        width,
+        height,
+        points: regularPolygonPoints(Math.abs(width), Math.abs(height), poly.sides ?? 6),
+      }
+    },
+    getDimensions: (shape) => {
+      const poly = shape as PolygonShape
+      return { width: poly.width, height: poly.height }
+    },
+    getCenter: (shape) => {
+      const poly = shape as PolygonShape
+      return { x: poly.x + poly.width / 2, y: poly.y + poly.height / 2 }
+    },
+    getBounds: (shape) => {
+      const poly = shape as PolygonShape
+      return { x: poly.x, y: poly.y, width: poly.width, height: poly.height }
+    },
+    formatDimensions: (shape) => {
+      const poly = shape as PolygonShape
+      return `${Math.round(poly.width)} × ${Math.round(poly.height)}`
+    },
+    hasMinimumSize: (shape, minSize) => {
+      const poly = shape as PolygonShape
+      return Math.abs(poly.width) > minSize && Math.abs(poly.height) > minSize
+    },
+    normalize: (shape) => {
+      const poly = shape as PolygonShape
+      return {
+        ...poly,
+        x: poly.width < 0 ? poly.x + poly.width : poly.x,
+        y: poly.height < 0 ? poly.y + poly.height : poly.y,
+        width: Math.abs(poly.width),
+        height: Math.abs(poly.height),
+        points: poly.sides
+          ? regularPolygonPoints(Math.abs(poly.width), Math.abs(poly.height), poly.sides)
+          : poly.points,
+      } as PolygonShape
+    },
+  },
+
+  path: {
+    displayName: 'Path',
+    getDefaultProps: (x, y, userId) => ({
+      type: 'path',
+      name: generateShapeName('path'),
+      x,
+      y,
+      d: defaultArchPath(100, 100),
+      width: 0,
+      height: 0,
+      viewBoxWidth: 100,
+      viewBoxHeight: 100,
+      color: '#D1D5DB',
+      opacity: 1.0,
+      zIndex: Date.now(),
+      createdBy: userId,
+    }),
+    updateCreationProps: (shape, mouseX, mouseY) => {
+      // Only width/height change during drag-creation; viewBox is fixed at
+      // 100×100 (the d data above is authored in that space). Resize after
+      // creation will also just update width/height; the path stretches via
+      // scaleX/Y in the renderer.
+      const width = mouseX - shape.x
+      const height = mouseY - shape.y
+      return { width, height }
+    },
+    getDimensions: (shape) => {
+      const path = shape as PathShape
+      return { width: path.width, height: path.height }
+    },
+    getCenter: (shape) => {
+      const path = shape as PathShape
+      return { x: path.x + path.width / 2, y: path.y + path.height / 2 }
+    },
+    getBounds: (shape) => {
+      const path = shape as PathShape
+      return { x: path.x, y: path.y, width: path.width, height: path.height }
+    },
+    formatDimensions: (shape) => {
+      const path = shape as PathShape
+      return `${Math.round(path.width)} × ${Math.round(path.height)}`
+    },
+    hasMinimumSize: (shape, minSize) => {
+      const path = shape as PathShape
+      return Math.abs(path.width) > minSize && Math.abs(path.height) > minSize
+    },
+    normalize: (shape) => {
+      const path = shape as PathShape
+      return {
+        ...path,
+        x: path.width < 0 ? path.x + path.width : path.x,
+        y: path.height < 0 ? path.y + path.height : path.y,
+        width: Math.abs(path.width),
+        height: Math.abs(path.height),
+      } as PathShape
+    },
+  },
+}
+
+/** Regenerate an N-sided regular polygon's points fitted into (0,0)–(w,h). */
+export function regularPolygonPoints(w: number, h: number, sides: number): number[] {
+  const n = Math.max(3, Math.floor(sides))
+  if (w <= 0 || h <= 0) return Array(n * 2).fill(0)
+  const cx = w / 2, cy = h / 2
+  const rx = w / 2, ry = h / 2
+  const pts: number[] = []
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * 2 * Math.PI - Math.PI / 2
+    pts.push(cx + rx * Math.cos(angle), cy + ry * Math.sin(angle))
+  }
+  return pts
+}
+
+/** A simple arch/blob path filling (0,0)–(w,h). */
+function defaultArchPath(w: number, h: number): string {
+  if (w <= 0 || h <= 0) return 'M 0 0'
+  return `M 0 ${h} Q ${w / 2} 0 ${w} ${h} Z`
 }
 
 // ============================================================================

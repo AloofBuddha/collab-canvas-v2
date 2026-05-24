@@ -4,6 +4,12 @@
  *
  * Uses a separate PartySocket connection dedicated to AI messages
  * (the Yjs provider uses its own binary WebSocket).
+ *
+ * Also tracks:
+ *   - history: a session-local turn list, used by the AI bar's thread peek.
+ *   - groupNames: map of groupId → human name (returned by the server's
+ *     composeArtifact tool) so the bar can show "EDITING · Fire truck" when
+ *     a user selects an AI-made artifact.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
@@ -23,7 +29,25 @@ interface AIOperation {
 interface AIResponse {
   type: 'ai-response'
   operations: AIOperation[]
+  groups?: Record<string, { name: string }>
   message: string
+  error?: string
+}
+
+export interface AIHistoryEntry {
+  id: string
+  prompt: string
+  /** ms epoch when the prompt was sent */
+  sentAt: number
+  /** Whether this prompt was scoped to refining an existing artifact */
+  refine: boolean
+  /** Group(s) created or extended by this prompt, populated on response */
+  groupIds: string[]
+  /** Once the response arrives: how many ops it produced */
+  opCount?: number
+  /** Final AI message text (the one-sentence summary) */
+  reply?: string
+  /** Error if the request failed */
   error?: string
 }
 
@@ -31,7 +55,6 @@ interface AIResponse {
 async function extractText(data: unknown): Promise<string | null> {
   if (typeof data === 'string') return data
   if (data instanceof Blob) {
-    // Blobs under ~1KB are likely Yjs binary sync; AI responses are JSON text
     try {
       return await data.text()
     } catch {
@@ -57,7 +80,12 @@ export function useAIChat(
   removeShape: (id: string) => void,
 ) {
   const [isLoading, setIsLoading] = useState(false)
+  const [history, setHistory] = useState<AIHistoryEntry[]>([])
+  const [groupNames, setGroupNames] = useState<Record<string, string>>({})
   const socketRef = useRef<PartySocket | null>(null)
+
+  // Track the in-flight turn so we can attach response metadata to it.
+  const pendingTurnIdRef = useRef<string | null>(null)
 
   // Store callbacks in refs so the socket message handler always reads
   // the latest without needing to reconnect when they change identity.
@@ -92,13 +120,20 @@ export function useAIChat(
 
       setIsLoading(false)
       const { addShape, updateShape, removeShape, userId } = callbacksRef.current
+      const turnId = pendingTurnIdRef.current
+      pendingTurnIdRef.current = null
 
       if (data.error) {
         console.error('[AI]', data.error)
+        if (turnId) {
+          setHistory(h => h.map(e => e.id === turnId ? { ...e, error: data.error } : e))
+        }
         return
       }
 
-      // Apply operations to the board
+      // Apply operations to the board. Collect the groupIds that appeared in
+      // this turn so we can attach them to the history entry afterwards.
+      const newGroupIds = new Set<string>()
       for (const op of data.operations) {
         switch (op.action) {
           case 'create': {
@@ -109,8 +144,15 @@ export function useAIChat(
               op.shape.y as number || 100,
               userId,
             )
-            const merged = { ...newShape, ...op.shape, id: newShape.id, createdBy: userId }
-            addShape(merged as Shape)
+            const merged = { ...newShape, ...op.shape, id: newShape.id, createdBy: userId } as Shape
+            // For paths from the AI, capture viewBox = current width/height so
+            // subsequent user resizing scales the d data via the renderer.
+            if (merged.type === 'path') {
+              if (!merged.viewBoxWidth) merged.viewBoxWidth = merged.width
+              if (!merged.viewBoxHeight) merged.viewBoxHeight = merged.height
+            }
+            addShape(merged)
+            if (merged.groupId) newGroupIds.add(merged.groupId)
             break
           }
           case 'update': {
@@ -127,6 +169,26 @@ export function useAIChat(
           }
         }
       }
+
+      // Merge group names so the bar can show "EDITING · Fire truck" later.
+      if (data.groups && Object.keys(data.groups).length > 0) {
+        setGroupNames(prev => {
+          const next = { ...prev }
+          for (const [gid, meta] of Object.entries(data.groups!)) {
+            next[gid] = meta.name
+          }
+          return next
+        })
+      }
+
+      if (turnId) {
+        setHistory(h => h.map(e => e.id === turnId ? {
+          ...e,
+          opCount: data.operations.length,
+          reply: data.message,
+          groupIds: Array.from(newGroupIds),
+        } : e))
+      }
     })
 
     socketRef.current = socket
@@ -136,10 +198,18 @@ export function useAIChat(
     }
   }, [boardId])
 
-  const sendMessage = useCallback((prompt: string) => {
+  const sendMessage = useCallback((prompt: string, opts?: { refine?: boolean }) => {
     if (!socketRef.current) return
-
+    const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+    pendingTurnIdRef.current = turnId
     setIsLoading(true)
+    setHistory(h => [{
+      id: turnId,
+      prompt,
+      sentAt: Date.now(),
+      refine: !!opts?.refine,
+      groupIds: [],
+    }, ...h])
 
     const currentShapes = shapesRef.current
     const shapeList = Object.values(currentShapes).map(s => ({
@@ -148,6 +218,7 @@ export function useAIChat(
       x: s.x,
       y: s.y,
       color: s.color,
+      groupId: s.groupId,
       ...('width' in s ? { width: s.width } : {}),
       ...('height' in s ? { height: s.height } : {}),
       ...('radiusX' in s ? { radiusX: s.radiusX } : {}),
@@ -163,5 +234,5 @@ export function useAIChat(
     }))
   }, [])
 
-  return { isLoading, sendMessage }
+  return { isLoading, sendMessage, history, groupNames }
 }

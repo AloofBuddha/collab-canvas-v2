@@ -21,6 +21,11 @@ export type ManipulationZone =
   | 'nw-rotate' | 'ne-rotate' | 'sw-rotate' | 'se-rotate'
   | 'start-point' | 'end-point'
 
+// CSS cursor for rotation zones. Custom SVG (curved arrow) with grab fallback
+// so we get a distinct rotate glyph rather than the generic "hand".
+const ROTATE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10a6.5 6.5 0 1 0 1.9-4.6"/><path d="M3 3v3.5h3.5"/></g></svg>`
+export const ROTATE_CURSOR = `url('data:image/svg+xml;utf8,${encodeURIComponent(ROTATE_SVG)}') 10 10, grab`
+
 export interface HitResult {
   zone: ManipulationZone
   cursor: string
@@ -91,7 +96,7 @@ export function detectManipulationZone(
     const zone: ManipulationZone = inNWRotation ? 'nw-rotate' :
       inNERotation ? 'ne-rotate' :
         inSWRotation ? 'sw-rotate' : 'se-rotate'
-    return { zone, cursor: 'grab' }
+    return { zone, cursor: ROTATE_CURSOR }
   }
 
   const inBounds = distFromLeft >= 0 && distFromRight >= 0 &&
@@ -188,6 +193,19 @@ export function calculateResize(
   if (originalShape.type === 'rectangle') return { x: newX, y: newY, width: newWidth, height: newHeight }
   if (originalShape.type === 'circle') return { x: newX, y: newY, radiusX: newWidth / 2, radiusY: newHeight / 2 }
   if (originalShape.type === 'text' || originalShape.type === 'sticky') return { x: newX, y: newY, width: newWidth, height: newHeight }
+  if (originalShape.type === 'polygon') {
+    // Scale every vertex by (newWidth/oldWidth, newHeight/oldHeight) so the
+    // polygon stretches with its bbox instead of staying frozen in old coords.
+    const sx = originalWidth > 0 ? newWidth / originalWidth : 1
+    const sy = originalHeight > 0 ? newHeight / originalHeight : 1
+    const scaled = originalShape.points.map((v, i) => (i % 2 === 0 ? v * sx : v * sy))
+    return { x: newX, y: newY, width: newWidth, height: newHeight, points: scaled }
+  }
+  if (originalShape.type === 'path') {
+    // Path data stays in its viewBox space; the renderer applies scaleX/scaleY
+    // = width/viewBoxWidth so the d stretches automatically.
+    return { x: newX, y: newY, width: newWidth, height: newHeight }
+  }
   return {}
 }
 
@@ -231,6 +249,8 @@ export function getShapeWidth(shape: Shape): number {
     case 'line': return Math.abs(shape.x2 - shape.x)
     case 'text': return shape.width
     case 'sticky': return shape.width
+    case 'polygon': return shape.width
+    case 'path': return shape.width
   }
 }
 
@@ -241,5 +261,7 @@ export function getShapeHeight(shape: Shape): number {
     case 'line': return Math.abs(shape.y2 - shape.y)
     case 'text': return shape.height
     case 'sticky': return shape.height
+    case 'polygon': return shape.height
+    case 'path': return shape.height
   }
 }
