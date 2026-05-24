@@ -39,8 +39,14 @@ interface Tool {
   }
 }
 
-type MessageParam =
-  | { role: 'user'; content: string | Array<{ type: 'tool_result'; tool_use_id: string; content: string }> }
+/** Content blocks the API accepts inside a user message. */
+type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_result'; tool_use_id: string; content: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg'; data: string } }
+
+export type MessageParam =
+  | { role: 'user'; content: string | UserContentBlock[] }
   | { role: 'assistant'; content: ContentBlock[] }
 
 // ============================================================================
@@ -90,12 +96,30 @@ export interface AIRequest {
 
 export interface AIResponse {
   type: 'ai-response'
+  /** Session identifier so the client can correlate review messages back to
+   *  the original request. Required for the iteration loop. */
+  sessionId: string
   operations: AIOperation[]
   /** Map of new groupId → human-readable name, so the client can display
    *  things like "EDITING · Fire truck" when one of these groups is selected. */
   groups?: Record<string, { name: string }>
   message: string
+  /** True when the client should render the canvas to a PNG and post an
+   *  ai-review message so Claude can critique its own work. */
+  requestReview: boolean
+  /** True when the session has wrapped — either Claude called finishedDrawing,
+   *  iteration cap was hit, or there's nothing left to do. */
+  done: boolean
   error?: string
+}
+
+/** Message sent by the client after applying operations: a screenshot of
+ *  the canvas. Server feeds it to Claude as image input on the next turn. */
+export interface AIReviewRequest {
+  type: 'ai-review'
+  sessionId: string
+  /** Base64-encoded PNG WITHOUT the "data:image/png;base64," prefix. */
+  image: string
 }
 
 // ============================================================================
@@ -231,6 +255,20 @@ const tools: Tool[] = [
       required: ['shapeId'],
     },
   },
+  {
+    name: 'finishedDrawing',
+    description:
+      'Call when the current artifact is good enough as-is, or when you have made your final surgical refinements during a critique pass. This stops the iteration loop. ' +
+      'Use this LIBERALLY during review passes — most of the time, the right move after one critique round is to call finishedDrawing rather than over-polish. ' +
+      'Always call this last (after any updateShape / composeArtifact you also want to make in the same turn).',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        score: { type: 'number', description: '1-10 self-rating of the final result. Be honest.' },
+        notes: { type: 'string', description: 'One short sentence summarizing what you produced.' },
+      },
+    },
+  },
 ]
 
 // ============================================================================
@@ -363,7 +401,16 @@ If the user references something already on the canvas (you'll see the current s
 # How to respond
 - Don't narrate before you call tools — go straight to composeArtifact.
 - After tool use, give a one-sentence summary of what you made.
-- If the user's request is ambiguous, make a reasonable choice and ship it — they can iterate.`
+- If the user's request is ambiguous, make a reasonable choice and ship it — they can iterate.
+
+# Self-review pass (when you receive an image of the canvas)
+After your initial draw, you may receive a follow-up user message containing an IMAGE of the current canvas plus a critique prompt. When that happens:
+1. **Look at the image honestly.** Score it 1-10 as a recognizable [the thing the user asked for].
+2. **If score ≥ 7**: call \`finishedDrawing\` immediately. No edits. Don't over-polish.
+3. **If 1-3 surgical fixes would clearly help** (a wheel is too small; an eye is in the wrong spot; a color is wrong): call updateShape/deleteShape/composeArtifact for ONLY those fixes, then call \`finishedDrawing\`.
+4. **If it's fundamentally broken** (totally unrecognizable): call \`finishedDrawing\` anyway. Don't redo from scratch — let the user re-prompt.
+5. **Never** add 10+ new shapes during a review pass. That's a sign you're starting over, which the user didn't ask for.
+6. Use the shape IDs visible in the board summary (e.g. \`ai-temp-N\`) to target your updates/deletes.`
 
 // ============================================================================
 // Agent runner
@@ -380,16 +427,37 @@ const MAX_TOOL_ROUNDS = 6
 // with 30-60 shapes can easily fill 8k tokens.
 const MAX_TOKENS = 20000
 
-export async function runAIAgent(
-  apiKey: string,
-  prompt: string,
-  currentShapes: ShapeData[],
-): Promise<AIResponse> {
+/** Per-turn run result. The session-level fields (messages, originalPrompt)
+ *  are kept on the AISession in party/index.ts so this module stays stateless. */
+export interface AIRunResult {
+  operations: AIOperation[]
+  groups: Record<string, { name: string }>
+  message: string
+  /** True if the model called finishedDrawing during this turn. */
+  finished: boolean
+  /** Updated message history including the model's tool-use turn(s). Caller
+   *  persists this on the session to feed into the next turn. */
+  messages: MessageParam[]
+  error?: string
+}
+
+export interface AIRunOptions {
+  apiKey: string
+  currentShapes: ShapeData[]
+  /** For the first turn of a session — builds the initial user message. */
+  initial?: { prompt: string }
+  /** For a follow-up review turn — appends a critique message with the image. */
+  review?: { priorMessages: MessageParam[]; imageBase64: string; artifactName: string; iteration: number }
+}
+
+export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
+  const { apiKey, currentShapes } = opts
   const operations: AIOperation[] = []
   const virtualShapes: ShapeData[] = [...currentShapes]
   const groups: Record<string, { name: string }> = {}
   let tempIdCounter = 0
   let tempGroupCounter = 0
+  let finished = false
 
   function newTempId(): string {
     return `ai-temp-${++tempIdCounter}`
@@ -457,24 +525,64 @@ export async function runAIAgent(
         return JSON.stringify({ success: true })
       }
 
+      case 'finishedDrawing': {
+        finished = true
+        const score = args.score as number | undefined
+        const notes = args.notes as string | undefined
+        return JSON.stringify({ acknowledged: true, score, notes })
+      }
+
       default:
         return JSON.stringify({ error: `Unknown tool: ${name}` })
     }
   }
 
-  // Compact board summary — keep the model focused on existing artifacts, not
-  // raw shape dumps.
-  const boardSummary = summarizeBoard(currentShapes)
-  // Free-space directive: explicit placement coordinates so back-to-back
-  // prompts don't pile up. The model has been instructed to honor this.
-  const placement = derivePlacement(currentShapes, prompt)
-
-  const messages: MessageParam[] = [
-    {
-      role: 'user',
-      content: `${placement}\n\n${boardSummary}\n\nUser request: ${prompt}`,
-    },
-  ]
+  // Build the running message history for this turn. For an initial request,
+  // we start fresh with the prompt. For a review, we extend the prior history
+  // with a new user turn containing the canvas image plus a critique prompt.
+  let messages: MessageParam[]
+  if (opts.initial) {
+    const boardSummary = summarizeBoard(currentShapes)
+    const placement = derivePlacement(currentShapes, opts.initial.prompt)
+    messages = [
+      {
+        role: 'user',
+        content: `${placement}\n\n${boardSummary}\n\nUser request: ${opts.initial.prompt}`,
+      },
+    ]
+  } else if (opts.review) {
+    const { priorMessages, imageBase64, artifactName, iteration } = opts.review
+    const boardSummary = summarizeBoard(currentShapes)
+    messages = [
+      ...priorMessages,
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: imageBase64 },
+          },
+          {
+            type: 'text',
+            text:
+              `Here is the current canvas after your last turn. Critique it honestly as a "${artifactName}".\n\n` +
+              `${boardSummary}\n\n` +
+              `Review pass ${iteration}/3. Follow the self-review rules in the system prompt. ` +
+              `Default action: call finishedDrawing. Only edit if there's a clear 1-3-fix improvement.`,
+          },
+        ],
+      },
+    ]
+  } else {
+    return {
+      operations: [],
+      groups: {},
+      message: '',
+      finished: true,
+      messages: [],
+      error: 'runAIAgent called without initial or review options.',
+    }
+  }
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
@@ -508,9 +616,6 @@ export async function runAIAgent(
 
       if (!httpResponse.ok) {
         const errBody = await httpResponse.text()
-        // Surface diagnostic context on the server so a 401 / 400 doesn't
-        // require another deploy cycle to debug. No secret leakage —
-        // we log only the fingerprint of the key we actually sent.
         console.error('[ai] Anthropic call failed', {
           status: httpResponse.status,
           statusText: httpResponse.statusText,
@@ -520,9 +625,11 @@ export async function runAIAgent(
           body: errBody.slice(0, 500),
         })
         return {
-          type: 'ai-response',
           operations,
+          groups,
           message: '',
+          finished: true,
+          messages,
           error: `Anthropic API ${httpResponse.status}: ${errBody.slice(0, 500)}`,
         }
       }
@@ -534,15 +641,16 @@ export async function runAIAgent(
         (b): b is ToolUseBlock => b.type === 'tool_use',
       )
 
-      // No tool calls = final answer.
+      // No tool calls = model is done with this turn.
       if (toolUses.length === 0 || response.stop_reason === 'end_turn') {
         const textBlocks = response.content.filter(b => b.type === 'text')
         const message = textBlocks.map(b => (b as TextBlock).text).join('\n').trim()
         return {
-          type: 'ai-response',
           operations,
           groups,
           message: message || 'Done.',
+          finished,
+          messages,
         }
       }
 
@@ -552,20 +660,38 @@ export async function runAIAgent(
         content: executeTool(tu.name, tu.input),
       }))
       messages.push({ role: 'user', content: toolResults })
+
+      // If the model called finishedDrawing mid-turn, we still want to run
+      // any other tools it called in the same response, but stop iterating
+      // further once they're processed.
+      if (finished && toolUses.every(tu => tu.name === 'finishedDrawing')) {
+        const textBlocks = response.content.filter(b => b.type === 'text')
+        const message = textBlocks.map(b => (b as TextBlock).text).join('\n').trim()
+        return {
+          operations,
+          groups,
+          message: message || 'Done.',
+          finished: true,
+          messages,
+        }
+      }
     }
 
     return {
-      type: 'ai-response',
       operations,
       groups,
       message: 'Done (reached step limit).',
+      finished: true,
+      messages,
     }
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error'
     return {
-      type: 'ai-response',
       operations: [],
+      groups: {},
       message: '',
+      finished: true,
+      messages,
       error: `AI agent error: ${errorMessage}`,
     }
   }

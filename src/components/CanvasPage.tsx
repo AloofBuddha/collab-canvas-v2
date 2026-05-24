@@ -88,9 +88,10 @@ export function CanvasPage({ user }: CanvasPageProps) {
     ungroupShapes,
   } = useBoard(boardId!, user, boardMeta?.title)
 
-  // AI Chat
-  const { isLoading: aiLoading, sendMessage: aiSend, history: aiHistory, groupNames } = useAIChat(
-    boardId!, user.userId, shapes, addShape, updateShape, removeShape,
+  // AI Chat — stageRef threaded in so the hook can render the canvas to a PNG
+  // and post it back during the vision iteration loop.
+  const { isLoading: aiLoading, phase: aiPhase, sendMessage: aiSend, history: aiHistory, groupNames } = useAIChat(
+    boardId!, user.userId, shapes, addShape, updateShape, removeShape, stageRef,
   )
 
   // Displayed title: Yjs is the source of truth, localStorage is fallback
@@ -735,6 +736,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
       <AIBar
         ref={aiBarRef}
         isLoading={aiLoading}
+        phase={aiPhase}
         history={aiHistory}
         selectedArtifactName={selectedArtifactName}
         onSubmit={(prompt, opts) => aiSend(prompt, opts)}

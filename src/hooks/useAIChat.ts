@@ -1,19 +1,17 @@
 /**
- * useAIChat — hook for sending AI prompts to the PartyKit server
- * and applying the resulting shape operations to the board.
+ * useAIChat — hook for sending AI prompts to the PartyKit server and
+ * applying the resulting shape operations to the board.
  *
- * Uses a separate PartySocket connection dedicated to AI messages
- * (the Yjs provider uses its own binary WebSocket).
- *
- * Also tracks:
- *   - history: a session-local turn list, used by the AI bar's thread peek.
- *   - groupNames: map of groupId → human name (returned by the server's
- *     composeArtifact tool) so the bar can show "EDITING · Fire truck" when
- *     a user selects an AI-made artifact.
+ * Supports the vision iteration loop: after applying a batch of operations,
+ * if the server flags requestReview=true, we render the current Konva canvas
+ * to a PNG via stage.toDataURL() and post it back as an ai-review message.
+ * Claude critiques + emits surgical fixes (or finishedDrawing) on the next
+ * turn. Caps at 3 iterations on the server.
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import PartySocket from 'partysocket'
+import type Konva from 'konva'
 import type { Shape } from '../types'
 import { createShape } from '../utils/shapeFactory'
 
@@ -28,47 +26,53 @@ interface AIOperation {
 
 interface AIResponse {
   type: 'ai-response'
+  sessionId: string
   operations: AIOperation[]
   groups?: Record<string, { name: string }>
   message: string
+  requestReview: boolean
+  done: boolean
   error?: string
 }
 
 export interface AIHistoryEntry {
   id: string
   prompt: string
-  /** ms epoch when the prompt was sent */
   sentAt: number
-  /** Whether this prompt was scoped to refining an existing artifact */
   refine: boolean
-  /** Group(s) created or extended by this prompt, populated on response */
   groupIds: string[]
-  /** Once the response arrives: how many ops it produced */
   opCount?: number
-  /** Final AI message text (the one-sentence summary) */
   reply?: string
-  /** Error if the request failed */
   error?: string
 }
 
-/** Try to extract a JSON string from a WebSocket message (could be string, Blob, or ArrayBuffer) */
+/** The AI bar surfaces this for cosmetic distinction between "Claude is
+ *  drawing" and "Claude is reviewing its work" — both block input but the
+ *  user gets a hint at what's happening. */
+export type AIPhase = 'idle' | 'painting' | 'reviewing'
+
 async function extractText(data: unknown): Promise<string | null> {
   if (typeof data === 'string') return data
   if (data instanceof Blob) {
-    try {
-      return await data.text()
-    } catch {
-      return null
-    }
+    try { return await data.text() } catch { return null }
   }
   if (data instanceof ArrayBuffer) {
-    try {
-      return new TextDecoder().decode(data)
-    } catch {
-      return null
-    }
+    try { return new TextDecoder().decode(data) } catch { return null }
   }
   return null
+}
+
+/** Render the current stage to a base64 PNG string (no data: prefix). */
+function stageToBase64Png(stage: Konva.Stage | null): string | null {
+  if (!stage) return null
+  // Cap pixel dimensions to keep the upload reasonable — Claude doesn't need
+  // a 4K screenshot to assess "is this a firetruck".
+  const dataUrl = stage.toDataURL({
+    pixelRatio: Math.min(1, 1024 / Math.max(stage.width(), stage.height())),
+    mimeType: 'image/png',
+  })
+  const comma = dataUrl.indexOf(',')
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
 }
 
 export function useAIChat(
@@ -78,61 +82,51 @@ export function useAIChat(
   addShape: (shape: Shape) => void,
   updateShape: (id: string, updates: Partial<Shape>) => void,
   removeShape: (id: string) => void,
+  stageRef: React.RefObject<Konva.Stage | null>,
 ) {
-  const [isLoading, setIsLoading] = useState(false)
+  const [phase, setPhase] = useState<AIPhase>('idle')
   const [history, setHistory] = useState<AIHistoryEntry[]>([])
   const [groupNames, setGroupNames] = useState<Record<string, string>>({})
   const socketRef = useRef<PartySocket | null>(null)
-
-  // Track the in-flight turn so we can attach response metadata to it.
   const pendingTurnIdRef = useRef<string | null>(null)
+  // The active session ID for review round-trips; cleared when the server
+  // marks done=true (or never set if the server didn't open one).
+  const activeSessionIdRef = useRef<string | null>(null)
 
-  // Store callbacks in refs so the socket message handler always reads
-  // the latest without needing to reconnect when they change identity.
-  const callbacksRef = useRef({ addShape, updateShape, removeShape, userId })
+  const callbacksRef = useRef({ addShape, updateShape, removeShape, userId, stageRef })
   useEffect(() => {
-    callbacksRef.current = { addShape, updateShape, removeShape, userId }
+    callbacksRef.current = { addShape, updateShape, removeShape, userId, stageRef }
   })
 
-  // Store shapes in ref for sendMessage to read latest without re-creating callback
   const shapesRef = useRef(shapes)
   useEffect(() => { shapesRef.current = shapes })
 
-  // Socket lifecycle — only depends on boardId
   useEffect(() => {
-    const socket = new PartySocket({
-      host: PARTYKIT_HOST,
-      room: boardId,
-    })
+    const socket = new PartySocket({ host: PARTYKIT_HOST, room: boardId })
 
     socket.addEventListener('message', async (event) => {
       const text = await extractText(event.data)
       if (!text) return
-
       let data: AIResponse
-      try {
-        data = JSON.parse(text)
-      } catch {
-        return // Not JSON — Yjs binary sync
-      }
-
+      try { data = JSON.parse(text) }
+      catch { return }
       if (data.type !== 'ai-response') return
 
-      setIsLoading(false)
-      const { addShape, updateShape, removeShape, userId } = callbacksRef.current
+      const { addShape, updateShape, removeShape, userId, stageRef } = callbacksRef.current
       const turnId = pendingTurnIdRef.current
-      pendingTurnIdRef.current = null
 
       if (data.error) {
         console.error('[AI]', data.error)
+        activeSessionIdRef.current = null
+        setPhase('idle')
         if (turnId) {
           setHistory(h => h.map(e => e.id === turnId ? { ...e, error: data.error } : e))
+          pendingTurnIdRef.current = null
         }
         return
       }
 
-      // Apply operations to the board. Collect the groupIds that appeared in
-      // this turn so we can attach them to the history entry afterwards.
+      // Apply this batch of operations to the board.
       const newGroupIds = new Set<string>()
       for (const op of data.operations) {
         switch (op.action) {
@@ -145,8 +139,6 @@ export function useAIChat(
               userId,
             )
             const merged = { ...newShape, ...op.shape, id: newShape.id, createdBy: userId } as Shape
-            // For paths from the AI, capture viewBox = current width/height so
-            // subsequent user resizing scales the d data via the renderer.
             if (merged.type === 'path') {
               if (!merged.viewBoxWidth) merged.viewBoxWidth = merged.width
               if (!merged.viewBoxHeight) merged.viewBoxHeight = merged.height
@@ -156,27 +148,20 @@ export function useAIChat(
             break
           }
           case 'update': {
-            if (op.shapeId && op.updates) {
-              updateShape(op.shapeId, op.updates)
-            }
+            if (op.shapeId && op.updates) updateShape(op.shapeId, op.updates)
             break
           }
           case 'delete': {
-            if (op.shapeId) {
-              removeShape(op.shapeId)
-            }
+            if (op.shapeId) removeShape(op.shapeId)
             break
           }
         }
       }
 
-      // Merge group names so the bar can show "EDITING · Fire truck" later.
       if (data.groups && Object.keys(data.groups).length > 0) {
         setGroupNames(prev => {
           const next = { ...prev }
-          for (const [gid, meta] of Object.entries(data.groups!)) {
-            next[gid] = meta.name
-          }
+          for (const [gid, meta] of Object.entries(data.groups!)) next[gid] = meta.name
           return next
         })
       }
@@ -184,10 +169,44 @@ export function useAIChat(
       if (turnId) {
         setHistory(h => h.map(e => e.id === turnId ? {
           ...e,
-          opCount: data.operations.length,
-          reply: data.message,
-          groupIds: Array.from(newGroupIds),
+          opCount: (e.opCount ?? 0) + data.operations.length,
+          reply: data.message || e.reply,
+          groupIds: e.groupIds.length > 0 ? e.groupIds : Array.from(newGroupIds),
         } : e))
+      }
+
+      // Branching: request a review pass, or finish.
+      if (data.requestReview && data.sessionId) {
+        activeSessionIdRef.current = data.sessionId
+        setPhase('reviewing')
+        // Let React/Konva commit the new shapes before screenshotting.
+        // requestAnimationFrame x2 + a short timeout is a belt-and-suspenders
+        // way to wait for layout + paint to settle on slow machines.
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            setTimeout(resolve, 80)
+          }))
+        })
+        const image = stageToBase64Png(stageRef.current)
+        if (!image) {
+          console.warn('[AI] could not render stage to PNG; skipping review')
+          activeSessionIdRef.current = null
+          setPhase('idle')
+          pendingTurnIdRef.current = null
+          return
+        }
+        socketRef.current?.send(JSON.stringify({
+          type: 'ai-review',
+          sessionId: data.sessionId,
+          image,
+        }))
+        // Keep pendingTurnIdRef so the next response is attributed to the
+        // same history entry.
+      } else {
+        // Done — no more rounds. Reset.
+        activeSessionIdRef.current = null
+        setPhase('idle')
+        pendingTurnIdRef.current = null
       }
     })
 
@@ -202,7 +221,8 @@ export function useAIChat(
     if (!socketRef.current) return
     const turnId = `turn-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
     pendingTurnIdRef.current = turnId
-    setIsLoading(true)
+    activeSessionIdRef.current = null
+    setPhase('painting')
     setHistory(h => [{
       id: turnId,
       prompt,
@@ -234,5 +254,9 @@ export function useAIChat(
     }))
   }, [])
 
-  return { isLoading, sendMessage, history, groupNames }
+  // isLoading is true whenever Claude is doing anything (painting or reviewing).
+  // The AIBar can read `phase` if it wants to distinguish the two visually.
+  const isLoading = phase !== 'idle'
+
+  return { isLoading, phase, sendMessage, history, groupNames }
 }

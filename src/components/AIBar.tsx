@@ -17,7 +17,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Send, Square, Sparkles } from 'lucide-react'
-import type { AIHistoryEntry } from '../hooks/useAIChat'
+import type { AIHistoryEntry, AIPhase } from '../hooks/useAIChat'
 import styles from './AIBar.module.css'
 
 export interface AIBarHandle {
@@ -27,6 +27,9 @@ export interface AIBarHandle {
 
 interface AIBarProps {
   isLoading: boolean
+  /** Distinguishes "painting" (first draft) from "reviewing" (vision pass).
+   *  Both block the input; only the status line differs. */
+  phase?: AIPhase
   /** Per-session prompt history. Currently used only to look up the in-flight
    *  prompt for streaming-state display; the persistent thread peek UI was
    *  removed to reclaim canvas space. */
@@ -43,7 +46,7 @@ interface AIBarProps {
 
 
 const AIBar = forwardRef<AIBarHandle, AIBarProps>(function AIBar({
-  isLoading, history, selectedArtifactName, onSubmit, onStop,
+  isLoading, phase = 'idle', history, selectedArtifactName, onSubmit, onStop,
 }, ref) {
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -89,8 +92,10 @@ const AIBar = forwardRef<AIBarHandle, AIBarProps>(function AIBar({
                 <span className={styles.spinner} />
               </div>
               <div className={styles.statusLine}>
-                <span className={styles.statusLineAccent}>painting</span>
-                <span>· Claude is composing</span>
+                <span className={styles.statusLineAccent}>
+                  {phase === 'reviewing' ? 'reviewing' : 'painting'}
+                </span>
+                <span>· {phase === 'reviewing' ? 'Claude is looking at the canvas' : 'Claude is composing'}</span>
               </div>
             </>
           ) : (
