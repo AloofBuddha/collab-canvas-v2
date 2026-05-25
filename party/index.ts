@@ -31,7 +31,13 @@ export default class YjsServer implements Party.Server {
   constructor(readonly room: Party.Room) {}
 
   onConnect(conn: Party.Connection) {
-    return onConnect(conn, this.room)
+    // `persist: { mode: "snapshot" }` snapshots the Yjs doc into the room's
+    // durable storage on every change. Without this, the doc only lives in
+    // memory and is wiped on hibernation or deploy. Snapshot mode (vs history)
+    // stores only the latest state — boards are read-write, not append-only.
+    return onConnect(conn, this.room, {
+      persist: { mode: "snapshot" },
+    })
   }
 
   async onMessage(message: string | ArrayBuffer, sender: Party.Connection) {

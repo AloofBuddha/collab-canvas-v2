@@ -12,6 +12,7 @@ import Konva from 'konva'
 import { useBoard } from '../hooks/useBoard'
 import { useCanvasPanning } from '../hooks/useCanvasPanning'
 import { useCanvasZoom } from '../hooks/useCanvasZoom'
+import { useCanvasTouchGestures } from '../hooks/useCanvasTouchGestures'
 import { useShapeCreation } from '../hooks/useShapeCreation'
 import { usePenCreation } from '../hooks/usePenCreation'
 import { usePenStrokeCreation } from '../hooks/usePenStrokeCreation'
@@ -211,6 +212,20 @@ export function CanvasPage({ user }: CanvasPageProps) {
     userId: user.userId,
     onShapeCreated: addShape,
     onToolChange: setTool,
+  })
+
+  // Touch gestures (mobile pinch-to-zoom + two-finger pan). Single-finger
+  // touches fall through to the existing mouse handlers via Konva's touch→
+  // mouse emulation. When a second finger lands, we cancel any in-progress
+  // single-touch operation so we don't commit a half-drawn shape on touchend.
+  const cancelInProgressTouch = useCallback(() => {
+    if (isPenning) cancelPen()
+    if (isStroking) cancelStroke()
+    if (isSelecting) cancelSelection()
+  }, [isPenning, isStroking, isSelecting, cancelPen, cancelStroke, cancelSelection])
+  const { handleTouchMove, handleTouchEnd } = useCanvasTouchGestures({
+    onScaleChange: setStageScale,
+    onCancelInProgress: cancelInProgressTouch,
   })
 
   // Shape dragging (with Alt+Drag duplication and multi-shape group drag)
@@ -608,8 +623,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         onDblClick={() => { if (isPenning) finishPen() }}
-        style={{ position: 'fixed', top: 0, left: 0 }}
+        /* touchAction: none tells the browser to leave touches on the canvas
+           alone — without it, Safari/Chrome intercept pinch as page zoom. */
+        style={{ position: 'fixed', top: 0, left: 0, touchAction: 'none' }}
       >
         {/* Grid background */}
         <GridBackground
