@@ -23,10 +23,11 @@ const CLAUDE_USER_ID = '__claude__'
 const CLAUDE_NAME = 'Claude'
 const CLAUDE_COLOR = '#C96442'
 
-/** Delay (ms) between paced operation applications. Skipped for tiny batches
- *  so trivial updates (1-3 shapes) still feel instant. */
-const PACE_STEP_MS = 60
-const PACE_THRESHOLD = 4
+/** Delay (ms) between paced operation applications. Long enough that the
+ *  cursor visibly walks from shape to shape rather than blurring through.
+ *  Skipped for trivial batches so a single tweak still feels instant. */
+const PACE_STEP_MS = 150
+const PACE_THRESHOLD = 3
 /** How long the cursor lingers at its final position before vanishing. */
 const CURSOR_LINGER_MS = 600
 

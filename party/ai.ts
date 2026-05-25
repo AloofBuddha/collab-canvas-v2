@@ -208,10 +208,14 @@ const tools: Tool[] = [
         },
         shapes: {
           type: 'array',
-          description: 'Every shape in the artifact, ordered back-to-front.',
+          description:
+            'Shapes to add in THIS call, ordered back-to-front. Keep each call to 3-10 shapes — the user sees them arrive in waves, and a single call of 30 shapes feels like one big flash after a long wait. Make a separate composeArtifact call for the next batch of details (use addToGroupId to extend the same group).',
           items: shapeSpecSchema,
           minItems: 1,
-          maxItems: 80,
+          // Schema-enforced cap: keeps any single call from monopolizing the
+          // whole artifact. Forces the model to split a 25-shape composition
+          // into ~3 calls, which the streaming layer then surfaces as waves.
+          maxItems: 10,
         },
         addToGroupId: {
           type: 'string',
@@ -425,15 +429,18 @@ After your initial draw, you may receive a follow-up user message containing an 
 // Agent runner
 // ============================================================================
 
-// Opus 4.7 + adaptive thinking is the configuration that approaches the
-// quality bar Claude Design hits — the model gets to deeply plan layouts
-// (decomposition, symmetry math, z-order) before placing any shape.
-// Opus 4.7 uses the newer thinking API: type=adaptive + output_config.effort.
+// Opus 4.7 + adaptive thinking. The newer API: type=adaptive + output_config.effort.
 const MODEL = 'claude-opus-4-7'
-const THINKING_EFFORT = 'high'
+// Effort knobs per call type. Initial draw uses 'medium' so the first shapes
+// appear in 10-20s instead of 40-60s. Review passes still use 'high' because
+// critique benefits from deep reasoning more than first-draft layout does.
+const INITIAL_EFFORT: 'low' | 'medium' | 'high' = 'medium'
+const REVIEW_EFFORT: 'low' | 'medium' | 'high' = 'high'
+// Tool-use rounds per turn. With maxItems=10 per composeArtifact, a 25-shape
+// firetruck spreads across ~3 rounds, leaving headroom for review tools.
 const MAX_TOOL_ROUNDS = 6
-// Leave plenty of room: extended thinking + a single big composeArtifact call
-// with 30-60 shapes can easily fill 8k tokens.
+// Leave plenty of room: extended thinking + several smaller composeArtifact
+// calls comfortably fit. 20k is conservative.
 const MAX_TOKENS = 20000
 
 /** Per-turn run result. The session-level fields (messages, originalPrompt)
@@ -644,7 +651,8 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
             type: 'adaptive',
           },
           output_config: {
-            effort: THINKING_EFFORT,
+            // Lower effort on initial draft (speed) vs higher on review (quality).
+            effort: opts.review ? REVIEW_EFFORT : INITIAL_EFFORT,
           },
           // Cache the system prompt + tool schemas — they're identical across
           // every request so this slashes per-call token cost.
