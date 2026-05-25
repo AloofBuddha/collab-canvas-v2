@@ -90,7 +90,14 @@ export function CanvasPage({ user }: CanvasPageProps) {
 
   // AI Chat — stageRef threaded in so the hook can render the canvas to a PNG
   // and post it back during the vision iteration loop.
-  const { isLoading: aiLoading, phase: aiPhase, sendMessage: aiSend, history: aiHistory, groupNames } = useAIChat(
+  const {
+    isLoading: aiLoading,
+    phase: aiPhase,
+    sendMessage: aiSend,
+    history: aiHistory,
+    groupNames,
+    claudeCursor,
+  } = useAIChat(
     boardId!, user.userId, shapes, addShape, updateShape, removeShape, stageRef,
   )
 
@@ -681,7 +688,7 @@ export function CanvasPage({ user }: CanvasPageProps) {
             />
           )}
 
-          {/* Remote cursors */}
+          {/* Remote cursors (human users) */}
           {remoteCursors.map((cursor) => (
             <RemoteCursor
               key={cursor.userId}
@@ -689,6 +696,12 @@ export function CanvasPage({ user }: CanvasPageProps) {
               stageScale={stageScale}
             />
           ))}
+
+          {/* Claude's synthetic cursor — appears while the AI is active and
+              moves to each shape as it lands during paced application. */}
+          {claudeCursor && (
+            <RemoteCursor cursor={claudeCursor} stageScale={stageScale} />
+          )}
         </Layer>
       </Stage>
       <Toolbar

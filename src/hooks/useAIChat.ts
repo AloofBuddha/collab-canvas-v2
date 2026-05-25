@@ -12,10 +12,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import PartySocket from 'partysocket'
 import type Konva from 'konva'
-import type { Shape } from '../types'
+import type { RemoteCursor, Shape } from '../types'
 import { createShape } from '../utils/shapeFactory'
 
 const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST ?? 'localhost:1999'
+
+/** Claude's identity on the canvas — coral accent so its cursor reads
+ *  distinctly from human users (who pick from a different palette). */
+const CLAUDE_USER_ID = '__claude__'
+const CLAUDE_NAME = 'Claude'
+const CLAUDE_COLOR = '#C96442'
+
+/** Delay (ms) between paced operation applications. Skipped for tiny batches
+ *  so trivial updates (1-3 shapes) still feel instant. */
+const PACE_STEP_MS = 60
+const PACE_THRESHOLD = 4
+/** How long the cursor lingers at its final position before vanishing. */
+const CURSOR_LINGER_MS = 600
 
 interface AIOperation {
   action: 'create' | 'update' | 'delete'
@@ -30,6 +43,9 @@ interface AIResponse {
   operations: AIOperation[]
   groups?: Record<string, { name: string }>
   message: string
+  /** Set when the server is streaming a batch — more is coming on this
+   *  session. Apply ops but don't end loading or trigger a review. */
+  partial: boolean
   requestReview: boolean
   done: boolean
   error?: string
@@ -50,6 +66,42 @@ export interface AIHistoryEntry {
  *  drawing" and "Claude is reviewing its work" — both block input but the
  *  user gets a hint at what's happening. */
 export type AIPhase = 'idle' | 'painting' | 'reviewing'
+
+/** Best-effort center for an op. For creates we read the shape spec; for
+ *  updates/deletes we fall back to the shape's current position in the board.
+ *  Used purely for the synthetic Claude cursor's blip position — accuracy
+ *  is cosmetic. */
+function opCenter(
+  op: AIOperation,
+  shapes: Record<string, Shape>,
+): { x: number; y: number } | null {
+  if (op.action === 'create' && op.shape) {
+    const s = op.shape as Partial<Shape> & { type: string }
+    if (s.type === 'circle') {
+      const c = s as Partial<Shape> & { radiusX?: number; radiusY?: number }
+      return { x: (s.x ?? 0) + (c.radiusX ?? 0), y: (s.y ?? 0) + (c.radiusY ?? 0) }
+    }
+    if (s.type === 'line') {
+      const l = s as Partial<Shape> & { x2?: number; y2?: number }
+      return { x: ((s.x ?? 0) + (l.x2 ?? s.x ?? 0)) / 2, y: ((s.y ?? 0) + (l.y2 ?? s.y ?? 0)) / 2 }
+    }
+    const r = s as Partial<Shape> & { width?: number; height?: number }
+    return { x: (s.x ?? 0) + (r.width ?? 0) / 2, y: (s.y ?? 0) + (r.height ?? 0) / 2 }
+  }
+  if ((op.action === 'update' || op.action === 'delete') && op.shapeId) {
+    const shape = shapes[op.shapeId]
+    if (!shape) return null
+    if (shape.type === 'circle') return { x: shape.x + shape.radiusX, y: shape.y + shape.radiusY }
+    if (shape.type === 'line') return { x: (shape.x + shape.x2) / 2, y: (shape.y + shape.y2) / 2 }
+    return {
+      x: shape.x + ('width' in shape ? shape.width / 2 : 0),
+      y: shape.y + ('height' in shape ? shape.height / 2 : 0),
+    }
+  }
+  return null
+}
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
 async function extractText(data: unknown): Promise<string | null> {
   if (typeof data === 'string') return data
@@ -87,10 +139,15 @@ export function useAIChat(
   const [phase, setPhase] = useState<AIPhase>('idle')
   const [history, setHistory] = useState<AIHistoryEntry[]>([])
   const [groupNames, setGroupNames] = useState<Record<string, string>>({})
+  /** Synthetic Claude cursor — moves to each new shape as it lands so the
+   *  user sees Claude "working through" its batch instead of an instant flood
+   *  of geometry. Null when Claude isn't active. */
+  const [claudeCursor, setClaudeCursor] = useState<RemoteCursor | null>(null)
+  /** Suppress the cursor briefly while we screenshot the canvas so it doesn't
+   *  appear in the image Claude sees. */
+  const cursorVisibleRef = useRef(true)
   const socketRef = useRef<PartySocket | null>(null)
   const pendingTurnIdRef = useRef<string | null>(null)
-  // The active session ID for review round-trips; cleared when the server
-  // marks done=true (or never set if the server didn't open one).
   const activeSessionIdRef = useRef<string | null>(null)
 
   const callbacksRef = useRef({ addShape, updateShape, removeShape, userId, stageRef })
@@ -119,6 +176,7 @@ export function useAIChat(
         console.error('[AI]', data.error)
         activeSessionIdRef.current = null
         setPhase('idle')
+        setClaudeCursor(null)
         if (turnId) {
           setHistory(h => h.map(e => e.id === turnId ? { ...e, error: data.error } : e))
           pendingTurnIdRef.current = null
@@ -126,9 +184,25 @@ export function useAIChat(
         return
       }
 
-      // Apply this batch of operations to the board.
+      // Pace this batch of operations: cursor → apply → short delay → next.
+      // Skips the delay for tiny batches so trivial updates feel instant.
       const newGroupIds = new Set<string>()
+      const shouldPace = data.operations.length >= PACE_THRESHOLD
       for (const op of data.operations) {
+        // Update cursor before applying so the visual leads the geometry.
+        if (cursorVisibleRef.current) {
+          const center = opCenter(op, shapesRef.current)
+          if (center) {
+            setClaudeCursor({
+              userId: CLAUDE_USER_ID,
+              name: CLAUDE_NAME,
+              color: CLAUDE_COLOR,
+              x: center.x,
+              y: center.y,
+            })
+          }
+        }
+
         switch (op.action) {
           case 'create': {
             if (!op.shape) break
@@ -156,6 +230,8 @@ export function useAIChat(
             break
           }
         }
+
+        if (shouldPace) await sleep(PACE_STEP_MS)
       }
 
       if (data.groups && Object.keys(data.groups).length > 0) {
@@ -175,19 +251,30 @@ export function useAIChat(
         } : e))
       }
 
+      // Partial: more is coming on this session. Apply, keep loading.
+      if (data.partial) {
+        return
+      }
+
       // Branching: request a review pass, or finish.
       if (data.requestReview && data.sessionId) {
         activeSessionIdRef.current = data.sessionId
         setPhase('reviewing')
-        // Let React/Konva commit the new shapes before screenshotting.
-        // requestAnimationFrame x2 + a short timeout is a belt-and-suspenders
-        // way to wait for layout + paint to settle on slow machines.
+        // Hide Claude's cursor for the screenshot so it doesn't end up in the
+        // image Claude reviews (which would be confusing — the model would
+        // see its own pointer as a canvas object).
+        cursorVisibleRef.current = false
+        setClaudeCursor(null)
+        // Let React/Konva commit the new shapes (and cursor removal) before
+        // screenshotting. 2× rAF + short timeout = paint-settled belt-and-suspenders.
         await new Promise<void>((resolve) => {
           requestAnimationFrame(() => requestAnimationFrame(() => {
             setTimeout(resolve, 80)
           }))
         })
         const image = stageToBase64Png(stageRef.current)
+        // Restore cursor visibility for the next paced batch.
+        cursorVisibleRef.current = true
         if (!image) {
           console.warn('[AI] could not render stage to PNG; skipping review')
           activeSessionIdRef.current = null
@@ -203,10 +290,11 @@ export function useAIChat(
         // Keep pendingTurnIdRef so the next response is attributed to the
         // same history entry.
       } else {
-        // Done — no more rounds. Reset.
+        // Done — let the cursor linger at its last position briefly, then clear.
         activeSessionIdRef.current = null
         setPhase('idle')
         pendingTurnIdRef.current = null
+        setTimeout(() => setClaudeCursor(null), CURSOR_LINGER_MS)
       }
     })
 
@@ -258,5 +346,5 @@ export function useAIChat(
   // The AIBar can read `phase` if it wants to distinguish the two visually.
   const isLoading = phase !== 'idle'
 
-  return { isLoading, phase, sendMessage, history, groupNames }
+  return { isLoading, phase, sendMessage, history, groupNames, claudeCursor }
 }

@@ -73,6 +73,32 @@ function ResizeHandles({ shape, stageScale }: { shape: Shape; stageScale: number
 }
 
 /**
+ * Invisible expansion of the parent Group's hit area so that very small
+ * shapes — AI-generated 2px wide circles, single-pixel polygons — remain
+ * clickable. Renders nothing visually but contributes its rect to the
+ * Group's union hit zone. Centered on the shape's local origin (after the
+ * usual offsetX/offsetY centering in each render branch).
+ */
+const MIN_HIT_DIM = 16
+function MinHitArea({ width, height, stageScale }: { width: number; height: number; stageScale: number }) {
+  // In world coordinates, screen pixels = world * stageScale; we want a
+  // 16-screen-pixel minimum, so the world-space dim is 16 / stageScale.
+  const minWorld = MIN_HIT_DIM / stageScale
+  if (width >= minWorld && height >= minWorld) return null
+  const hitW = Math.max(width, minWorld)
+  const hitH = Math.max(height, minWorld)
+  return (
+    <Rect
+      width={hitW}
+      height={hitH}
+      offsetX={hitW / 2}
+      offsetY={hitH / 2}
+      fill="transparent"
+    />
+  )
+}
+
+/**
  * Renders the text overlay on a shape. Reads the unified text/font/align
  * fields from BaseShape; falls back to the deprecated label/labelFontSize/
  * labelColor fields so older data still draws.
@@ -177,6 +203,7 @@ export default function ShapeRenderer({
               strokeWidth={shapeStrokeWidth}
               cornerRadius={rect.cornerRadius ?? 0}
             />
+            <MinHitArea width={rect.width} height={rect.height} stageScale={stageScale} />
             <ShapeText shape={rect} width={rect.width} height={rect.height} />
             {showBorder && (
               <Rect
@@ -234,6 +261,7 @@ export default function ShapeRenderer({
               stroke={circle.stroke}
               strokeWidth={shapeStrokeWidth}
             />
+            <MinHitArea width={circle.radiusX * 2} height={circle.radiusY * 2} stageScale={stageScale} />
             <ShapeText shape={circle} width={circle.radiusX * 2} height={circle.radiusY * 2} />
             {showBorder && (
               <Ellipse
@@ -285,6 +313,10 @@ export default function ShapeRenderer({
               points={points}
               stroke={line.color}
               strokeWidth={line.strokeWidth}
+              // hitStrokeWidth expands the click zone without changing the
+              // visible thickness — a 1px line still LOOKS 1px but the user
+              // can grab it within ~14px screen pixels of its centerline.
+              hitStrokeWidth={Math.max(line.strokeWidth, 14 / stageScale)}
               opacity={shapeOpacity}
               {...(hasArrow ? {
                 pointerLength,
@@ -448,6 +480,7 @@ export default function ShapeRenderer({
               offsetX={poly.width / 2}
               offsetY={poly.height / 2}
             />
+            <MinHitArea width={poly.width} height={poly.height} stageScale={stageScale} />
             <ShapeText shape={poly} width={poly.width} height={poly.height} />
             {showBorder && (
               <Rect
@@ -488,6 +521,7 @@ export default function ShapeRenderer({
               opacity={shapeOpacity}
               stroke={path.stroke}
               strokeWidth={pathStrokeWidth}
+              hitStrokeWidth={Math.max(pathStrokeWidth, 14 / stageScale)}
               lineJoin="round"
               lineCap="round"
               scaleX={sx}
@@ -495,6 +529,7 @@ export default function ShapeRenderer({
               offsetX={vbW / 2}
               offsetY={vbH / 2}
             />
+            <MinHitArea width={path.width} height={path.height} stageScale={stageScale} />
             {showBorder && (
               <Rect
                 width={path.width + selectionPadding * 2}

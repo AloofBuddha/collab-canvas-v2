@@ -104,6 +104,11 @@ export interface AIResponse {
    *  things like "EDITING · Fire truck" when one of these groups is selected. */
   groups?: Record<string, { name: string }>
   message: string
+  /** True if this is an in-flight partial batch — more is coming on this
+   *  session. Client should apply ops but NOT trigger a review screenshot
+   *  or end the loading state. The final non-partial response will set
+   *  requestReview or done. */
+  partial: boolean
   /** True when the client should render the canvas to a PNG and post an
    *  ai-review message so Claude can critique its own work. */
   requestReview: boolean
@@ -317,7 +322,11 @@ If you're about to draw something that needs a slanted/curved edge and you're te
 
 4. **Plan z-order back to front.** Declare shapes from the BACKGROUND forward. zIndex 0 = furthest back. Each next shape gets a higher zIndex. For a firetruck: zIndex 0 = body rectangle, then cab, then windows on top of cab, then wheels in front of body, then light on top.
 
-5. **Submit it all at once.** Call composeArtifact with the full list of shapes and a name. Don't dribble shapes in one at a time.
+5. **Build progressively across 2-4 composeArtifact calls.** Don't try to ship the whole artifact in one giant call. The user has to wait ~60s for any one round-trip; if you make ONE call with 20 shapes, they wait the whole time staring at nothing. Instead:
+   - **Call 1**: the foundational shapes (body/frame/background, the main silhouette). Give the group a clear name. ~3-8 shapes.
+   - **Call 2** (with addToGroupId set to the groupId you got back): the main details (wheels, windows, eyes — the next layer of recognition). ~4-10 shapes.
+   - **Call 3** (optional, addToGroupId): refinements (highlights, badge text, accent stripes). ~2-6 shapes.
+   - Pause briefly between calls — the user sees your work appear in waves instead of all at once after a long blank wait.
 
 6. **Give the group a clear name** so the user can find and manipulate it later. "Fire truck", "SWOT analysis", "Smiley face".
 
@@ -448,6 +457,10 @@ export interface AIRunOptions {
   initial?: { prompt: string }
   /** For a follow-up review turn — appends a critique message with the image. */
   review?: { priorMessages: MessageParam[]; imageBase64: string; artifactName: string; iteration: number }
+  /** Called after each agent round that produced operations. Lets the server
+   *  stream batches to the client incrementally instead of waiting for the
+   *  whole turn to complete. */
+  onRound?: (round: { operations: AIOperation[]; groups: Record<string, { name: string }> }) => void | Promise<void>
 }
 
 export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
@@ -455,6 +468,11 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
   const operations: AIOperation[] = []
   const virtualShapes: ShapeData[] = [...currentShapes]
   const groups: Record<string, { name: string }> = {}
+  // Per-round buffers — reset at the top of each loop iteration. executeTool
+  // writes into these; after the round completes we emit them via onRound
+  // and roll them into the cumulative operations/groups.
+  let roundOperations: AIOperation[] = []
+  let roundGroups: Record<string, { name: string }> = {}
   let tempIdCounter = 0
   let tempGroupCounter = 0
   let finished = false
@@ -473,7 +491,7 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
         const addTo = args.addToGroupId as string | undefined
         const groupId = addTo || newGroupId()
         // Record the (possibly new) group's name so the client can display it.
-        if (!addTo) groups[groupId] = { name: groupName }
+        if (!addTo) roundGroups[groupId] = { name: groupName }
         const inputShapes = (args.shapes as Record<string, unknown>[]) || []
         const createdIds: string[] = []
         for (const spec of inputShapes) {
@@ -486,7 +504,7 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
             groupId,
           }
           for (const key of ['width', 'height', 'radiusX', 'radiusY', 'x2', 'y2',
-            'points', 'd', 'cornerRadius',
+            'points', 'd', 'cornerRadius', 'viewBoxWidth', 'viewBoxHeight',
             'text', 'fontSize', 'fontFamily', 'textColor', 'align', 'verticalAlign',
             'label', 'labelFontSize', 'labelColor', 'stroke', 'strokeWidth',
             'arrowStart', 'arrowEnd', 'zIndex']) {
@@ -494,7 +512,12 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
               (shape as Record<string, unknown>)[key] = spec[key]
             }
           }
-          operations.push({ action: 'create', shape })
+          // Normalize polygons + paths: the model frequently lies about width/
+          // height, leaving the shape with a bbox that doesn't match its
+          // actual extent — making it unselectable or visually overflowing.
+          // Derive the bbox from the data itself.
+          normalizeShapeGeometry(shape)
+          roundOperations.push({ action: 'create', shape })
           virtualShapes.push({ id: tempId, ...shape } as ShapeData)
           createdIds.push(tempId)
         }
@@ -512,7 +535,7 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
         const idx = virtualShapes.findIndex(s => s.id === shapeId)
         if (idx === -1) return JSON.stringify({ error: `Shape ${shapeId} not found` })
         Object.assign(virtualShapes[idx], updates)
-        operations.push({ action: 'update', shapeId: shapeId as string, updates: updates as Partial<ShapeData> })
+        roundOperations.push({ action: 'update', shapeId: shapeId as string, updates: updates as Partial<ShapeData> })
         return JSON.stringify({ success: true })
       }
 
@@ -521,7 +544,7 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
         const idx = virtualShapes.findIndex(s => s.id === shapeId)
         if (idx === -1) return JSON.stringify({ error: `Shape ${shapeId} not found` })
         virtualShapes.splice(idx, 1)
-        operations.push({ action: 'delete', shapeId: shapeId as string })
+        roundOperations.push({ action: 'delete', shapeId: shapeId as string })
         return JSON.stringify({ success: true })
       }
 
@@ -584,8 +607,29 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
     }
   }
 
+  // Helper: after a round of tool execution, fold round buffers into the
+  // cumulative results and emit a partial response via onRound (if provided).
+  // Called regardless of whether this round produced new ops — but we only
+  // invoke the onRound callback when there's something to show.
+  const flushRound = async () => {
+    if (roundOperations.length === 0 && Object.keys(roundGroups).length === 0) {
+      return
+    }
+    const opsSnapshot = roundOperations
+    const groupsSnapshot = roundGroups
+    operations.push(...opsSnapshot)
+    Object.assign(groups, groupsSnapshot)
+    roundOperations = []
+    roundGroups = {}
+    if (opts.onRound) {
+      await opts.onRound({ operations: opsSnapshot, groups: groupsSnapshot })
+    }
+  }
+
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      roundOperations = []
+      roundGroups = {}
       const httpResponse = await fetch(ANTHROPIC_URL, {
         method: 'POST',
         headers: {
@@ -643,6 +687,7 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
 
       // No tool calls = model is done with this turn.
       if (toolUses.length === 0 || response.stop_reason === 'end_turn') {
+        await flushRound() // nothing to flush typically, but kept for symmetry
         const textBlocks = response.content.filter(b => b.type === 'text')
         const message = textBlocks.map(b => (b as TextBlock).text).join('\n').trim()
         return {
@@ -661,9 +706,12 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
       }))
       messages.push({ role: 'user', content: toolResults })
 
-      // If the model called finishedDrawing mid-turn, we still want to run
-      // any other tools it called in the same response, but stop iterating
-      // further once they're processed.
+      // Emit this round's ops to whoever's listening. Lets the server stream
+      // partial responses to the client between rounds rather than buffering
+      // the entire turn into one big late delivery.
+      await flushRound()
+
+      // If finishedDrawing was the only tool, exit cleanly.
       if (finished && toolUses.every(tu => tu.name === 'finishedDrawing')) {
         const textBlocks = response.content.filter(b => b.type === 'text')
         const message = textBlocks.map(b => (b as TextBlock).text).join('\n').trim()
@@ -698,9 +746,54 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
 }
 
 /**
+ * Make sure polygon/path width/height actually correspond to the geometry.
+ * The model sometimes provides points or path data that extend past its
+ * declared bbox; we override the bbox to match the data so selection handles
+ * land in the right place and the shape stays clickable. Mutates in place.
+ */
+function normalizeShapeGeometry(shape: Partial<ShapeData> & { type: ShapeData['type'] }) {
+  if (shape.type === 'polygon' && Array.isArray(shape.points) && shape.points.length >= 4) {
+    const xs: number[] = []
+    const ys: number[] = []
+    for (let i = 0; i < shape.points.length; i += 2) {
+      xs.push(shape.points[i])
+      ys.push(shape.points[i + 1])
+    }
+    const minX = Math.min(...xs), maxX = Math.max(...xs)
+    const minY = Math.min(...ys), maxY = Math.max(...ys)
+    const w = Math.max(1, maxX - minX)
+    const h = Math.max(1, maxY - minY)
+    shape.points = shape.points.map((v, i) => (i % 2 === 0 ? v - minX : v - minY))
+    shape.x = (shape.x ?? 0) + minX
+    shape.y = (shape.y ?? 0) + minY
+    shape.width = w
+    shape.height = h
+    return
+  }
+  if (shape.type === 'path' && typeof shape.d === 'string') {
+    const matches = shape.d.match(/-?[\d.]+/g)
+    if (!matches) return
+    const nums = matches.map(Number).filter(Number.isFinite)
+    if (nums.length < 2 || nums.length % 2 !== 0) return
+    let maxX = 0, maxY = 0
+    for (let i = 0; i < nums.length; i += 2) {
+      if (nums[i] > maxX) maxX = nums[i]
+      if (nums[i + 1] > maxY) maxY = nums[i + 1]
+    }
+    const naturalW = Math.max(1, maxX)
+    const naturalH = Math.max(1, maxY)
+    shape.viewBoxWidth = naturalW
+    shape.viewBoxHeight = naturalH
+    if ((shape.width ?? 0) < naturalW) shape.width = naturalW
+    if ((shape.height ?? 0) < naturalH) shape.height = naturalH
+  }
+}
+
+/**
  * Compact textual description of the board state for the model. Groups
  * shapes by groupId so the model thinks in artifacts, not individual atoms.
  */
+
 /**
  * Build the PLACEMENT directive that prefaces every prompt. If the prompt
  * sounds like a refinement (mentions add/extend/edit/change) AND there's at

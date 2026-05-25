@@ -64,8 +64,10 @@ const AIBar = forwardRef<AIBarHandle, AIBarProps>(function AIBar({
   }, [isLoading])
 
   const isRefine = !!selectedArtifactName
-  const pendingTurn = history.find(h => h.opCount === undefined && !h.error)
+  const pendingTurn = history.find(h => h.opCount === undefined && !h.error) ?? history[0]
   const runningPrompt = isLoading ? pendingTurn?.prompt ?? '' : ''
+  const opsPlaced = isLoading ? pendingTurn?.opCount ?? 0 : 0
+  const elapsed = useElapsedSeconds(isLoading ? pendingTurn?.sentAt : undefined)
 
   const placeholder =
     isLoading                  ? runningPrompt :
@@ -95,7 +97,8 @@ const AIBar = forwardRef<AIBarHandle, AIBarProps>(function AIBar({
                 <span className={styles.statusLineAccent}>
                   {phase === 'reviewing' ? 'reviewing' : 'painting'}
                 </span>
-                <span>· {phase === 'reviewing' ? 'Claude is looking at the canvas' : 'Claude is composing'}</span>
+                <span>·</span>
+                <span>{describeProgress(phase, elapsed, opsPlaced)}</span>
               </div>
             </>
           ) : (
@@ -149,6 +152,38 @@ export default AIBar
 // ============================================================================
 // Sub-components
 // ============================================================================
+
+/**
+ * Live elapsed-seconds counter for the in-flight turn. Re-renders once per
+ * second so the user sees concrete progress while Opus thinks.
+ */
+function useElapsedSeconds(startMs: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (startMs === undefined) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [startMs])
+  return startMs === undefined ? 0 : Math.max(0, Math.floor((now - startMs) / 1000))
+}
+
+/**
+ * One-line, ever-changing status that makes the long Opus call feel alive.
+ * The progression: thinking → painting → reviewing → "still working" if slow.
+ */
+function describeProgress(phase: AIPhase, elapsed: number, opsPlaced: number): string {
+  const time = elapsed > 0 ? `${elapsed}s` : ''
+  if (phase === 'reviewing') {
+    return time ? `Claude is reviewing · ${time}` : 'Claude is reviewing'
+  }
+  // painting (or initial idle moment before first paint)
+  if (opsPlaced > 0) {
+    return `placed ${opsPlaced} shape${opsPlaced === 1 ? '' : 's'} · ${time}`
+  }
+  if (elapsed >= 30) return `Claude is thinking · ${time} · Opus is thorough, hang tight`
+  if (elapsed >= 10) return `Claude is thinking · ${time}`
+  return time ? `Claude is composing · ${time}` : 'Claude is composing'
+}
 
 function Avatar({ streaming }: { streaming: boolean }) {
   return (

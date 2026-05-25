@@ -57,20 +57,33 @@ export default class YjsServer implements Party.Server {
     if (!apiKey) return
 
     const sessionId = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    let streamedAny = false
     try {
       const result = await runAIAgent({
         apiKey,
         currentShapes: req.shapes,
         initial: { prompt: req.prompt },
+        onRound: async (round) => {
+          // Stream each round's batch as a partial as soon as it lands.
+          streamedAny = true
+          const partial: AIResponse = {
+            type: 'ai-response',
+            sessionId,
+            operations: round.operations,
+            groups: round.groups,
+            message: '',
+            partial: true,
+            requestReview: false,
+            done: false,
+          }
+          sender.send(JSON.stringify(partial))
+        },
       })
 
-      // Capture the artifact's name (first newly-created group) for the
-      // critique prompt on subsequent review passes.
+      // Capture the artifact's name (first new group) for the critique prompt.
       const newGroupNames = Object.values(result.groups)
       const artifactName = newGroupNames[0]?.name ?? req.prompt.slice(0, 40)
 
-      // Open a session only if we have something to review. If finished or
-      // empty, this was a one-shot.
       const shouldReview = !result.finished
         && result.operations.length > 0
         && !result.error
@@ -83,12 +96,17 @@ export default class YjsServer implements Party.Server {
         })
       }
 
+      // Final response: if we already streamed partials, the ops have all
+      // been delivered, so the final message carries empty ops + the
+      // requestReview/done metadata. If nothing streamed (single-shot result),
+      // send everything in one final non-partial response.
       const response: AIResponse = {
         type: 'ai-response',
         sessionId,
-        operations: result.operations,
-        groups: result.groups,
+        operations: streamedAny ? [] : result.operations,
+        groups: streamedAny ? {} : result.groups,
         message: result.message,
+        partial: false,
         requestReview: shouldReview,
         done: !shouldReview,
         error: result.error,
@@ -100,6 +118,7 @@ export default class YjsServer implements Party.Server {
         sessionId,
         operations: [],
         message: '',
+        partial: false,
         requestReview: false,
         done: true,
         error: `Server error: ${err instanceof Error ? err.message : 'Unknown'}`,
@@ -114,13 +133,12 @@ export default class YjsServer implements Party.Server {
   private async handleAIReview(req: AIReviewRequest, sender: Party.Connection) {
     const session = this.sessions.get(req.sessionId)
     if (!session) {
-      // No session — silently end. The client should already have shown the
-      // initial response as final.
       const errorResponse: AIResponse = {
         type: 'ai-response',
         sessionId: req.sessionId,
         operations: [],
         message: '',
+        partial: false,
         requestReview: false,
         done: true,
         error: 'No active session — review skipped.',
@@ -129,11 +147,8 @@ export default class YjsServer implements Party.Server {
       return
     }
 
+    let streamedAny = false
     try {
-      // Pull the latest shapes from the request body too, so the agent sees
-      // the same state the user does (in case of remote edits between turns).
-      // For now we just reuse the message-embedded knowledge. Future:
-      // include shapes in the review payload.
       const result = await runAIAgent({
         apiKey: session.apiKey,
         currentShapes: [],
@@ -142,6 +157,20 @@ export default class YjsServer implements Party.Server {
           imageBase64: req.image,
           artifactName: session.artifactName,
           iteration: session.iteration + 1,
+        },
+        onRound: async (round) => {
+          streamedAny = true
+          const partial: AIResponse = {
+            type: 'ai-response',
+            sessionId: req.sessionId,
+            operations: round.operations,
+            groups: round.groups,
+            message: '',
+            partial: true,
+            requestReview: false,
+            done: false,
+          }
+          sender.send(JSON.stringify(partial))
         },
       })
 
@@ -165,9 +194,10 @@ export default class YjsServer implements Party.Server {
       const response: AIResponse = {
         type: 'ai-response',
         sessionId: req.sessionId,
-        operations: result.operations,
-        groups: result.groups,
+        operations: streamedAny ? [] : result.operations,
+        groups: streamedAny ? {} : result.groups,
         message: result.message,
+        partial: false,
         requestReview: shouldReviewAgain,
         done: !shouldReviewAgain,
         error: result.error,
@@ -180,6 +210,7 @@ export default class YjsServer implements Party.Server {
         sessionId: req.sessionId,
         operations: [],
         message: '',
+        partial: false,
         requestReview: false,
         done: true,
         error: `Server error during review: ${err instanceof Error ? err.message : 'Unknown'}`,
@@ -212,6 +243,7 @@ export default class YjsServer implements Party.Server {
         sessionId: '',
         operations: [],
         message: '',
+        partial: false,
         requestReview: false,
         done: true,
         error: 'ANTHROPIC_API_KEY not configured on server.',
@@ -224,6 +256,7 @@ export default class YjsServer implements Party.Server {
         sessionId: '',
         operations: [],
         message: '',
+        partial: false,
         requestReview: false,
         done: true,
         error: `ANTHROPIC_API_KEY has wrong format (expected sk-ant-…, got "${apiKey.slice(0, 6)}…"). Set the Anthropic key, not xAI / OpenAI.`,
