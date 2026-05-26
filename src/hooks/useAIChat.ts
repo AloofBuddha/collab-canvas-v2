@@ -218,6 +218,13 @@ export function useAIChat(
               if (!merged.viewBoxWidth) merged.viewBoxWidth = merged.width
               if (!merged.viewBoxHeight) merged.viewBoxHeight = merged.height
             }
+            // The toolbar default for polygon includes sides:6 (regular hexagon).
+            // AI polygons are custom-vertex and don't pass `sides` — clear the
+            // leaked default so the SidePanel treats them as custom geometry
+            // and never regenerates points from `sides` on a width/height edit.
+            if (merged.type === 'polygon' && (op.shape as Record<string, unknown>).sides === undefined) {
+              delete (merged as { sides?: number }).sides
+            }
             addShape(merged)
             if (merged.groupId) newGroupIds.add(merged.groupId)
             break
