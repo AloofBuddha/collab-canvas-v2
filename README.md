@@ -2,7 +2,7 @@
 
 A collaborative whiteboard with real-time multiplayer sync and AI-assisted board generation. Think Miro, but with an AI agent that can create and arrange shapes from natural language commands.
 
-**Live:** [collab-canvas-v2.vercel.app](https://collab-canvas-v2.vercel.app)
+**Live:** [collab-canvas-ben-cohen.vercel.app](https://collab-canvas-ben-cohen.vercel.app)
 
 ## Tech Stack
 

@@ -671,7 +671,6 @@ export async function runAIAgent(opts: AIRunOptions): Promise<AIRunResult> {
         console.error('[ai] Anthropic call failed', {
           status: httpResponse.status,
           statusText: httpResponse.statusText,
-          keyFingerprint: `${apiKey.slice(0, 8)}…${apiKey.slice(-4)} (len=${apiKey.length})`,
           anthropicVersion: ANTHROPIC_VERSION,
           model: MODEL,
           body: errBody.slice(0, 500),

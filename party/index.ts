@@ -263,13 +263,8 @@ export class Main extends YServer<Env> {
   private requireApiKey(sender: Connection, req: AIRequest): string | null {
     const apiKey = this.env.ANTHROPIC_API_KEY
 
-    const envNames = Object.keys(this.env)
-    const fingerprint = apiKey
-      ? `${apiKey.slice(0, 8)}…${apiKey.slice(-4)} (len=${apiKey.length})`
-      : '<missing>'
     console.log('[ai] request received', {
-      envVarsAvailable: envNames,
-      anthropicKey: fingerprint,
+      anthropicKeySet: !!apiKey,
       anthropicKeyStartsWithSkAnt: apiKey?.startsWith('sk-ant-') ?? false,
       promptPreview: req.prompt?.slice(0, 60),
       shapesCount: req.shapes?.length ?? 0,
@@ -297,7 +292,7 @@ export class Main extends YServer<Env> {
         partial: false,
         requestReview: false,
         done: true,
-        error: `ANTHROPIC_API_KEY has wrong format (expected sk-ant-…, got "${apiKey.slice(0, 6)}…"). Set the Anthropic key, not xAI / OpenAI.`,
+        error: 'ANTHROPIC_API_KEY has wrong format (expected sk-ant-…). Set the Anthropic key, not xAI / OpenAI.',
       } satisfies AIResponse))
       return null
     }
