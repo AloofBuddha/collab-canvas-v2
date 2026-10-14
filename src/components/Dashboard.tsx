@@ -1,7 +1,7 @@
 /**
  * Dashboard - Board listing and creation page
  *
- * Tracks boards in localStorage (no server-side board listing with PartyKit).
+ * Tracks boards in localStorage (no server-side board listing with PartyServer).
  * Shows two sections: owned boards (deletable) and recently visited boards.
  */
 

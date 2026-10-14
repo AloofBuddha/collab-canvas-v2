@@ -1,5 +1,6 @@
-import type * as Party from "partykit/server"
-import { onConnect } from "y-partykit"
+import { routePartykitRequest, type Connection, type WSMessage } from "partyserver"
+import { YServer } from "y-partyserver"
+import * as Y from "yjs"
 import { runAIAgent } from "./ai"
 import type { AIRequest, AIResponse, AIReviewRequest, MessageParam } from "./ai"
 
@@ -19,30 +20,61 @@ interface AISession {
   artifactName: string
 }
 
+interface Env {
+  Main: DurableObjectNamespace<Main>
+  ANTHROPIC_API_KEY?: string
+}
+
+// Durable Object storage caps a single value at 2 MB, so the Yjs snapshot is
+// split into chunks. All chunks + the count go in one atomic put().
+const CHUNK_BYTES = 1_000_000
+
 interface IncomingMessage {
   type?: string
 }
 
-export default class YjsServer implements Party.Server {
-  // Per-server-instance map of sessionId → in-progress AI session. PartyKit
-  // keeps one instance per "room", so this scales with active boards.
+// One Durable Object per board ("main" party, room = boardId).
+export class Main extends YServer<Env> {
+  // Per-instance map of sessionId → in-progress AI session. There's one
+  // instance per room, so this scales with active boards.
   private sessions = new Map<string, AISession>()
 
-  constructor(readonly room: Party.Room) {}
-
-  onConnect(conn: Party.Connection) {
-    // `persist: { mode: "snapshot" }` snapshots the Yjs doc into the room's
-    // durable storage on every change. Without this, the doc only lives in
-    // memory and is wiped on hibernation or deploy. Snapshot mode (vs history)
-    // stores only the latest state — boards are read-write, not append-only.
-    return onConnect(conn, this.room, {
-      persist: { mode: "snapshot" },
-    })
+  // Snapshot the Yjs doc into durable storage (debounced by YServer, and on
+  // room empty). Without this the doc is wiped on eviction or deploy.
+  async onLoad() {
+    const count = await this.ctx.storage.get<number>("doc:count")
+    if (!count) return
+    const keys = Array.from({ length: count }, (_, i) => `doc:${i}`)
+    const parts = await this.ctx.storage.get<Uint8Array>(keys)
+    const chunks = keys.map(k => parts.get(k)!)
+    const update = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
+    let offset = 0
+    for (const c of chunks) { update.set(c, offset); offset += c.length }
+    Y.applyUpdate(this.document, update)
   }
 
-  async onMessage(message: string | ArrayBuffer, sender: Party.Connection) {
-    if (typeof message !== 'string') return // skip Yjs binary frames
+  async onSave() {
+    const update = Y.encodeStateAsUpdate(this.document)
+    const entries: Record<string, unknown> = {}
+    let i = 0
+    for (; i * CHUNK_BYTES < update.length; i++) {
+      entries[`doc:${i}`] = update.slice(i * CHUNK_BYTES, (i + 1) * CHUNK_BYTES)
+    }
+    entries["doc:count"] = i
+    // ponytail: stale chunks past doc:count are ignored, not deleted
+    await this.ctx.storage.put(entries)
+  }
 
+  onMessage(sender: Connection, message: WSMessage) {
+    // Yjs binary frames and provider custom messages go to YServer; plain
+    // JSON strings are AI requests from useAIChat's separate PartySocket.
+    if (typeof message !== 'string' || message.startsWith('__YPS:')) {
+      return super.onMessage(sender, message)
+    }
+    return this.handleJSON(message, sender)
+  }
+
+  private async handleJSON(message: string, sender: Connection) {
     let parsed: IncomingMessage
     try { parsed = JSON.parse(message) }
     catch { return }
@@ -58,7 +90,7 @@ export default class YjsServer implements Party.Server {
   // ai-request: initial draw turn
   // ==========================================================================
 
-  private async handleAIRequest(req: AIRequest, sender: Party.Connection) {
+  private async handleAIRequest(req: AIRequest, sender: Connection) {
     const apiKey = this.requireApiKey(sender, req)
     if (!apiKey) return
 
@@ -136,7 +168,7 @@ export default class YjsServer implements Party.Server {
   // ai-review: critique-pass turn (client supplies a canvas screenshot)
   // ==========================================================================
 
-  private async handleAIReview(req: AIReviewRequest, sender: Party.Connection) {
+  private async handleAIReview(req: AIReviewRequest, sender: Connection) {
     const session = this.sessions.get(req.sessionId)
     if (!session) {
       const errorResponse: AIResponse = {
@@ -228,10 +260,10 @@ export default class YjsServer implements Party.Server {
   // Shared: env validation + logging
   // ==========================================================================
 
-  private requireApiKey(sender: Party.Connection, req: AIRequest): string | null {
-    const apiKey = this.room.env.ANTHROPIC_API_KEY as string | undefined
+  private requireApiKey(sender: Connection, req: AIRequest): string | null {
+    const apiKey = this.env.ANTHROPIC_API_KEY
 
-    const envNames = Object.keys(this.room.env)
+    const envNames = Object.keys(this.env)
     const fingerprint = apiKey
       ? `${apiKey.slice(0, 8)}…${apiKey.slice(-4)} (len=${apiKey.length})`
       : '<missing>'
@@ -273,4 +305,8 @@ export default class YjsServer implements Party.Server {
   }
 }
 
-YjsServer satisfies Party.Worker
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return (await routePartykitRequest(request, env)) ?? new Response("Not Found", { status: 404 })
+  },
+} satisfies ExportedHandler<Env>

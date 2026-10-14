@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Doc, Map as YMap, UndoManager } from "yjs"
-import YPartyKitProvider from "y-partykit/provider"
+import YProvider from "y-partyserver/provider"
 import type { Awareness } from "y-protocols/awareness"
 import type { Cursor, RemoteCursor, Shape, User } from "../types/index.ts"
 import { pickAvailableColor } from "../utils/userColors.ts"
@@ -21,7 +21,7 @@ function generateGuestName(clientId: number): string {
   return `${animal}-${clientId % 1000}`
 }
 
-const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST ?? "localhost:1999"
+const PARTY_HOST = import.meta.env.VITE_PARTY_HOST ?? "localhost:1999"
 const WS_PROTOCOL = import.meta.env.PROD ? "wss" : "ws"
 
 export function useBoard(boardId: string, user?: User, initialTitle?: string) {
@@ -32,14 +32,14 @@ export function useBoard(boardId: string, user?: User, initialTitle?: string) {
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
   const [boardTitle, setBoardTitle] = useState<string | null>(null)
-  const providerRef = useRef<YPartyKitProvider | null>(null)
+  const providerRef = useRef<YProvider | null>(null)
   const awarenessRef = useRef<Awareness | null>(null)
   const shapesMapRef = useRef<YMap<Shape> | null>(null)
   const undoManagerRef = useRef<UndoManager | null>(null)
 
   useEffect(() => {
     const doc = new Doc()
-    const provider = new YPartyKitProvider(PARTYKIT_HOST, boardId, doc, {
+    const provider = new YProvider(PARTY_HOST, boardId, doc, {
       protocol: WS_PROTOCOL as "ws" | "wss",
     })
     const awareness = provider.awareness

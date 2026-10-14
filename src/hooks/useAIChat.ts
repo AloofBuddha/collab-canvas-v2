@@ -1,5 +1,5 @@
 /**
- * useAIChat — hook for sending AI prompts to the PartyKit server and
+ * useAIChat — hook for sending AI prompts to the PartyServer worker and
  * applying the resulting shape operations to the board.
  *
  * Supports the vision iteration loop: after applying a batch of operations,
@@ -15,7 +15,7 @@ import type Konva from 'konva'
 import type { RemoteCursor, Shape } from '../types'
 import { createShape } from '../utils/shapeFactory'
 
-const PARTYKIT_HOST = import.meta.env.VITE_PARTYKIT_HOST ?? 'localhost:1999'
+const PARTY_HOST = import.meta.env.VITE_PARTY_HOST ?? 'localhost:1999'
 
 /** Claude's identity on the canvas — coral accent so its cursor reads
  *  distinctly from human users (who pick from a different palette). */
@@ -160,7 +160,7 @@ export function useAIChat(
   useEffect(() => { shapesRef.current = shapes })
 
   useEffect(() => {
-    const socket = new PartySocket({ host: PARTYKIT_HOST, room: boardId })
+    const socket = new PartySocket({ host: PARTY_HOST, room: boardId })
 
     socket.addEventListener('message', async (event) => {
       const text = await extractText(event.data)

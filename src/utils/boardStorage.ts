@@ -1,7 +1,7 @@
 /**
  * Board metadata storage (localStorage)
  *
- * Since boards live on PartyKit (no server-side listing), we track
+ * Since boards live in Durable Objects (no server-side listing), we track
  * boards the user has created/visited in localStorage.
  * Ownership: boards created by this user have ownedByMe=true,
  * boards visited from other users have ownedByMe=false.

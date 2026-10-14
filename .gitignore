@@ -9,8 +9,8 @@ lerna-debug.log*
 
 node_modules
 dist
-.partykit
-.vars
+.dev.vars
+.wrangler
 dist-ssr
 *.local
 
@@ -31,3 +31,10 @@ dist-ssr
 /blob-report/
 /playwright/.cache/
 .vercel
+
+# Secrets
+.env
+.env.*
+*.pem
+*.key
+credentials.json

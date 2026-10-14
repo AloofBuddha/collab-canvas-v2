@@ -1,0 +1,12 @@
+{
+  "name": "collab-canvas-v2",
+  "main": "party/index.ts",
+  "compatibility_date": "2026-10-01",
+  "durable_objects": {
+    "bindings": [{ "name": "Main", "class_name": "Main" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Main"] }],
+  "workers_dev": true,
+  "preview_urls": false,
+  "dev": { "port": 1999 }
+}

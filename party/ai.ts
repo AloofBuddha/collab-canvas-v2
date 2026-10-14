@@ -1,5 +1,5 @@
 /**
- * AI Agent for CollabBoard — runs on PartyKit server (Cloudflare Workers).
+ * AI Agent for CollabBoard — runs on the PartyServer Durable Object (Cloudflare Workers).
  *
  * Anthropic Claude with native tool use. The agent operates on a virtual
  * board state, recording shape operations for the client to apply via Yjs so

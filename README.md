@@ -10,26 +10,26 @@ A collaborative whiteboard with real-time multiplayer sync and AI-assisted board
 |-------|-----------|
 | Frontend | React 19 + TypeScript + Vite |
 | Canvas | react-konva (Konva.js) |
-| Real-time sync | Yjs (CRDT) + PartyKit (WebSocket) |
+| Real-time sync | Yjs (CRDT) + PartyServer (WebSocket, Durable Objects) |
 | Auth | Firebase Auth (email/password + Google sign-in) |
 | Styling | CSS Modules (no Tailwind) |
-| Deployment | Vercel (frontend) + PartyKit (Cloudflare Edge) |
+| Deployment | Vercel (frontend) + Cloudflare Workers (PartyServer) |
 | AI | Anthropic Claude API via LangChain (planned) |
 
 ## Architecture
 
 ```
-User action → Yjs Y.Map.set() → CRDT auto-sync via PartyKit WebSocket
+User action → Yjs Y.Map.set() → CRDT auto-sync via PartyServer WebSocket
 → Y.Map.observe() fires on all clients → React state update → re-render
 ```
 
 The core data layer is a Yjs document per board. Shapes live in a `Y.Map<Shape>` — no intermediate state store (no Zustand/Redux for shapes). The `useBoard` hook owns the Yjs lifecycle and exposes shapes + CRUD operations to React.
 
-PartyKit hosts the Yjs WebSocket server on Cloudflare's edge network. The frontend connects via `y-partykit`, which handles sync, awareness (cursors/presence), and reconnection.
+A Cloudflare Worker running [PartyServer](https://github.com/cloudflare/partykit) hosts one Durable Object per board, which relays Yjs updates and persists the doc to Durable Object storage. The frontend connects via `y-partyserver`, which handles sync, awareness (cursors/presence), and reconnection.
 
 ### Key Design Decisions
 
-- **No server-side board listing** — PartyKit rooms are ephemeral. Board metadata (title, ownership, last visited) is tracked in localStorage. Yjs stores the canonical board title so all clients see the same name.
+- **No server-side board listing** — Durable Objects can't be listed per user. Board metadata (title, ownership, last visited) is tracked in localStorage. Yjs stores the canonical board title so all clients see the same name.
 - **Full-viewport canvas** — The Konva Stage is `position: fixed; top: 0` filling the entire viewport. The Header overlays on top with `z-index`. This avoids offset math for mouse coordinates.
 - **CSS Modules only** — All component styles use CSS Modules with shared design tokens (CSS custom properties in `index.css`). No utility-class frameworks.
 - **CRDT conflict resolution** — Yjs handles concurrent edits at the CRDT level (last-writer-wins per shape). No manual conflict resolution needed.
@@ -88,7 +88,7 @@ src/
 │   ├── auth.ts          # Firebase Auth wrappers
 │   └── ...
 ├── types/index.ts       # Shape, User, Cursor type definitions
-└── party/index.ts       # PartyKit server (Yjs WebSocket relay)
+└── party/index.ts       # PartyServer worker (Yjs relay + AI agent); config in wrangler.jsonc
 ```
 
 ## Development
@@ -100,8 +100,11 @@ npm install
 # Start frontend dev server
 npm run dev
 
-# Start PartyKit dev server (separate terminal)
+# Start PartyServer dev server on :1999 (separate terminal)
 npm run dev:party
+
+# Deploy the worker (set the AI key once: npx wrangler secret put ANTHROPIC_API_KEY)
+npm run deploy:party
 
 # Run unit tests
 npm test
@@ -124,7 +127,7 @@ npm run build
 Copy `.env.template` to `.env` and fill in:
 
 ```
-VITE_PARTYKIT_HOST=localhost:1999   # or production PartyKit URL
+VITE_PARTY_HOST=localhost:1999      # or the deployed *.workers.dev host
 VITE_FIREBASE_*                     # Firebase config values
 ```
 

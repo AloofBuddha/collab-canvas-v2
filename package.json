@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:party": "npx partykit dev",
+    "dev:party": "wrangler dev",
+    "deploy:party": "wrangler deploy",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
@@ -18,16 +19,17 @@
     "firebase": "^12.9.0",
     "konva": "^10.2.0",
     "lucide-react": "^0.564.0",
-    "partykit": "^0.0.115",
+    "partyserver": "^0.5.10",
     "partysocket": "^1.1.13",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-konva": "^19.2.2",
     "react-router-dom": "^7.13.0",
-    "y-partykit": "^0.0.33",
+    "y-partyserver": "^2.2.0",
     "yjs": "^13.6.29"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261014.1",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.58.2",
     "@testing-library/jest-dom": "^6.9.1",
@@ -44,6 +46,7 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.48.0",
     "vite": "^7.3.1",
-    "vitest": "^4.0.18"
+    "vitest": "^4.0.18",
+    "wrangler": "^4.151.0"
   }
 }
